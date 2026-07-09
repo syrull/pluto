@@ -190,7 +190,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			in := strings.TrimSpace(m.input.Value())
-			m.lines = append(m.lines, stylePrompt.Render("› ")+styleUser.Render(in))
+			m.lines = append(m.lines, m.renderUserLine(in))
 			m.input.Reset()
 			if strings.HasPrefix(in, "/") {
 				status, cmd := m.handleCommand(in)

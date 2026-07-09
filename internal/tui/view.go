@@ -49,6 +49,31 @@ func (m *model) renderMarkdown(src string) string {
 	return strings.TrimRight(out, "\n")
 }
 
+// renderUserLine wraps a user message to the viewport width, indenting
+// continuation lines under the prompt so multi-line input doesn't run off screen.
+func (m *model) renderUserLine(in string) string {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	const prefix = "› "
+	w -= len(prefix)
+	if w < 10 {
+		w = 10
+	}
+	wrapped := styleUser.Width(w).Render(in)
+	lines := strings.Split(wrapped, "\n")
+	indent := strings.Repeat(" ", len(prefix))
+	for i, ln := range lines {
+		if i == 0 {
+			lines[i] = stylePrompt.Render(prefix) + ln
+		} else {
+			lines[i] = indent + ln
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 func renderEvent(ev agent.Event) string {
 	switch ev.Kind {
 	case "text":
