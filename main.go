@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/auth"
@@ -15,13 +16,49 @@ import (
 	"github.com/pluto/harness/internal/tui"
 )
 
-const systemPrompt = "You are a minimal file-editing agent with read, write, edit, find, and bash tools. " +
-	"Always use the find tool (not grep/rg/ag inside bash) to search file contents — it returns " +
-	"bounded, pre-truncated results that won't blow up the context window. Reserve bash for actions " +
-	"find and the other tools can't do (running builds/tests, git, listing directories, etc.). " +
+// systemPromptBase is the static guidance prepended to the dynamically
+// generated tool listing built from the registry (see buildSystemPrompt).
+const systemPromptBase = "You are a minimal file-editing agent. " +
+	"Always use the read tool (not cat/head/tail/sed/less inside bash) to view file contents, and " +
+	"the find tool (not grep/rg/ag/find inside bash) to search them — both return bounded, " +
+	"pre-truncated output that won't blow up the context window, and read/find accept offset/limit " +
+	"and path/glob to page through or scope large results. Reserve bash for actions those tools " +
+	"can't do (running builds/tests, git, listing directories, etc.). " +
 	"Before making any decision or editing code, always explore the relevant code first and clearly " +
 	"understand what it does — read the surrounding context, trace callers and definitions, and " +
 	"confirm your understanding rather than acting on assumptions."
+
+// contextFiles are project instruction files auto-injected into the system
+// prompt when present in the working directory, in this order.
+var contextFiles = []string{"CLAUDE.md", "AGENTS.md"}
+
+// buildSystemPrompt appends a listing of the registered tools to the static
+// base so the prompt always reflects the actual registry rather than a
+// hardcoded list that can drift as tools are added or removed. Any project
+// context files (see contextFiles) present in the working directory are
+// injected after the tool listing so their guidance rides along with the
+// system message on every conversation reset.
+func buildSystemPrompt(reg *tool.Registry) string {
+	var b strings.Builder
+	b.WriteString(systemPromptBase)
+	b.WriteString("\n\nAvailable tools:")
+	for _, t := range reg.Tools() {
+		fmt.Fprintf(&b, "\n- %s: %s", t.Name(), t.Description())
+	}
+	for _, name := range contextFiles {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			// Missing/unreadable context files are expected; skip silently.
+			continue
+		}
+	content := strings.TrimSpace(string(data))
+		if content == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "\n\n--- Project context from %s ---\n%s", name, content)
+	}
+	return b.String()
+}
 
 func main() {
 	if path, err := debug.Init(); err != nil {
@@ -40,7 +77,7 @@ func main() {
 
 	provider := selectProvider()
 
-	ag := agent.New(provider, reg, systemPrompt)
+	ag := agent.New(provider, reg, buildSystemPrompt(reg))
 	if _, err := tui.New(ag, buildLoginHook(ag)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "harness:", err)
 		os.Exit(1)

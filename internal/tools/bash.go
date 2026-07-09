@@ -21,8 +21,10 @@ var _ tool.Tool = Bash{}
 func (Bash) Name() string { return "bash" }
 func (Bash) Description() string {
 	return "Run a shell command via `sh -c` and return its combined stdout and stderr. " +
-		"Do not use this to search file contents (no grep/rg/ag) — use the find tool instead, " +
-		"which bounds its output so it can't overflow the context window."
+		"To read files use the read tool (not cat/head/tail/sed) and to search file " +
+		"contents use the find tool (not grep/rg/ag) — both bound their output so it " +
+		"can't overflow the context window. Simple cat/grep/rg commands issued here " +
+		"are transparently routed to those tools."
 }
 
 func (Bash) Schema() json.RawMessage {
@@ -50,6 +52,13 @@ func (Bash) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	}
 	if strings.TrimSpace(a.Command) == "" {
 		return "", fmt.Errorf("bash: command is required")
+	}
+
+	// Redirect trivially simple file-read/content-search commands to the Read
+	// and Find tools, whose output is bounded. Anything with shell syntax falls
+	// through to a real subshell below.
+	if out, err, handled := redirectBash(ctx, a.Command); handled {
+		return out, err
 	}
 
 	timeout := bashDefaultTimeout

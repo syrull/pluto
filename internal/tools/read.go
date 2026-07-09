@@ -20,9 +20,11 @@ var _ tool.Tool = Read{}
 
 func (Read) Name() string { return "read" }
 func (Read) Description() string {
-	return "Read a file, returning numbered lines. Use offset (1-indexed start " +
-		"line) and limit (max lines) to view a range of a large file instead of " +
-		"running sed/head/tail through bash."
+	return "Read the contents of a file, returning numbered lines. This is the " +
+		"primary way to view files — always prefer it over cat/head/tail/sed/less " +
+		"through the bash tool. Pass offset (1-indexed start line) and limit (max " +
+		"lines) to page through a large file instead of pulling it in all at once; " +
+		"output is bounded so it can't overflow the context window."
 }
 
 func (Read) Schema() json.RawMessage {

@@ -21,9 +21,12 @@ var _ tool.Tool = Find{}
 
 func (Find) Name() string { return "find" }
 func (Find) Description() string {
-	return "Search file contents with ripgrep and return bounded `path:line:text` matches. " +
-		"Prefer this tool over running grep/rg/ag through bash: it caps matches per file, " +
-		"total lines, and output bytes so results can't blow up the context window."
+	return "Search file contents across a tree and return `path:line:text` matches. " +
+		"This is the primary way to search code — always prefer it over " +
+		"grep/rg/ag/find through the bash tool. Backed by ripgrep, it caps matches " +
+		"per file, total lines, and output bytes so results can't overflow the " +
+		"context window. Pass a regex pattern, an optional path to scope the search, " +
+		"and an optional glob to include/exclude files."
 }
 
 func (Find) Schema() json.RawMessage {
