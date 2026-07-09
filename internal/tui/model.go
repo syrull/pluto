@@ -5,9 +5,11 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/tui/widgets"
@@ -28,10 +30,10 @@ type LoginHook struct {
 type model struct {
 	agent  *agent.Agent
 	login  *LoginHook
-	lines  []string      // committed transcript lines
-	input  string        // current input buffer
-	busy   bool          // agent running; input disabled
-	events chan eventMsg // agent → UI stream for the active Run
+	lines  []string       // committed transcript lines
+	input  textarea.Model // current input buffer, multi-line with word wrap
+	busy   bool           // agent running; input disabled
+	events chan eventMsg  // agent → UI stream for the active Run
 	width  int
 
 	vp    viewport.Model
@@ -46,15 +48,36 @@ type model struct {
 	picker *widgets.ListPicker
 }
 
-const footerHeight = 3
+// inputHeight is the fixed number of visible rows in the input box; longer
+// input scrolls within it rather than growing the box.
+const inputHeight = 3
+
+const footerHeight = 2 + inputHeight
+
+// newInput builds a word-wrapping, multi-line input box.
+func newInput(width int) textarea.Model {
+	ta := textarea.New()
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	ta.Prompt = ""
+	ta.Placeholder = ""
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
+	ta.SetPromptFunc(2, func(line int) string {
+		if line == 0 {
+			return stylePrompt.Render("› ")
+		}
+		return "  "
+	})
+	ta.SetHeight(inputHeight)
+	ta.SetWidth(width)
+	ta.Focus()
+	return ta
+}
 
 // New builds the Bubbletea program.
 func New(a *agent.Agent, login *LoginHook) *tea.Program {
-	m := model{agent: a, login: login, md: newRenderer(80)}
-	m.lines = append(m.lines,
-		styleHint.Render("harness ready — commands: /login to authenticate · /model to pick a model (↑/↓, enter) · /think [off|low|medium|high|xhigh|max] to set thinking effort, model-dependent (bare /think cycles) · /new to start a fresh conversation · ctrl+c to quit"),
-		styleHint.Render("scroll: pgup/pgdn · ctrl+u/ctrl+d"),
-	)
+	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80)}
 	return tea.NewProgram(m, tea.WithAltScreen())
 }
 

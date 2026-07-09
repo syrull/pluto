@@ -246,14 +246,14 @@ func TestScrollKeysChangePosition(t *testing.T) {
 		m, _ = m.Update(eventMsg{Kind: "text", Text: "line " + fmt.Sprintf("%d", len(got.lines))})
 	}
 	got = m.(model)
-	inputBefore := got.input
+	inputBefore := got.input.Value()
 
 	// Apply each scroll key.
 	for _, msgType := range []tea.KeyType{tea.KeyPgUp, tea.KeyPgDown, tea.KeyCtrlU, tea.KeyCtrlD, tea.KeyUp, tea.KeyDown} {
 		m, _ = m.Update(tea.KeyMsg{Type: msgType})
 		got = m.(model)
-		if got.input != inputBefore {
-			t.Fatalf("scroll key changed input buffer from %q to %q", inputBefore, got.input)
+		if got.input.Value() != inputBefore {
+			t.Fatalf("scroll key changed input buffer from %q to %q", inputBefore, got.input.Value())
 		}
 	}
 	// vp.YOffset should have changed (we're not at bottom anymore).
@@ -278,8 +278,8 @@ func TestPrintableKeyRegression(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	got = m.(model)
 
-	if got.input != "jk" {
-		t.Fatalf("input = %q, want %q", got.input, "jk")
+	if got.input.Value() != "jk" {
+		t.Fatalf("input = %q, want %q", got.input.Value(), "jk")
 	}
 	if got.vp.YOffset != offsetBefore {
 		t.Fatalf("vp.YOffset changed from %d to %d (j/k should not scroll)", offsetBefore, got.vp.YOffset)
@@ -333,28 +333,29 @@ func TestAutoFollowWhenAtBottom(t *testing.T) {
 }
 
 func TestViewFooterBusy(t *testing.T) {
-	m := &model{busy: true, input: "hello"}
+	in := newInput(80)
+	in.SetValue("hello")
+	m := &model{busy: true, input: in}
 	view := m.View()
 	if !strings.Contains(view, "working") {
 		t.Fatalf("busy footer should contain \"working\", got:\n%s", view)
 	}
-	if strings.Contains(view, "hello") || strings.Contains(view, "▏") {
+	if strings.Contains(view, "hello") {
 		t.Fatalf("busy footer should not show input, got:\n%s", view)
 	}
 }
 
 func TestViewFooterNotReady(t *testing.T) {
+	in := newInput(80)
+	in.SetValue("hello")
 	m := &model{
 		md:    newRenderer(80),
 		ready: false,
-		input: "hello",
+		input: in,
 	}
 	view := m.View()
 	if !strings.Contains(view, "hello") {
 		t.Fatalf("not-ready view should contain input \"hello\", got:\n%s", view)
-	}
-	if !strings.Contains(view, "▏") {
-		t.Fatalf("not-ready view should contain cursor, got:\n%s", view)
 	}
 }
 
@@ -463,11 +464,13 @@ func TestHandleCommandThinkLevelsAnthropic(t *testing.T) {
 }
 
 func TestViewFooterReady(t *testing.T) {
+	in := newInput(80)
+	in.SetValue("test")
 	m := &model{
 		md:    newRenderer(80),
 		ready: true,
 		vp:    viewport.Model{Width: 40, Height: 6},
-		input: "test",
+		input: in,
 	}
 	m.syncViewport()
 

@@ -142,10 +142,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.ready {
 			m.vp = viewport.New(msg.Width, h)
 			m.vp.KeyMap = scrollKeymap()
+			m.input = newInput(msg.Width)
 			m.ready = true
 		} else {
 			m.vp.Width = msg.Width
 			m.vp.Height = h
+			m.input.SetWidth(msg.Width)
 		}
 		m.syncViewport()
 		return m, nil
@@ -180,12 +182,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp, cmd = m.vp.Update(msg)
 			return m, cmd
 		case tea.KeyEnter:
-			if m.busy || strings.TrimSpace(m.input) == "" {
+			if msg.Alt {
+				m.input.InsertRune('\n')
 				return m, nil
 			}
-			in := strings.TrimSpace(m.input)
+			if m.busy || strings.TrimSpace(m.input.Value()) == "" {
+				return m, nil
+			}
+			in := strings.TrimSpace(m.input.Value())
 			m.lines = append(m.lines, stylePrompt.Render("› ")+styleUser.Render(in))
-			m.input = ""
+			m.input.Reset()
 			if strings.HasPrefix(in, "/") {
 				status, cmd := m.handleCommand(in)
 				if status != "" {
@@ -201,19 +207,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.runAgent(in)
 			m.syncViewport()
 			return m, cmd
-		case tea.KeyBackspace:
-			if len(m.input) > 0 {
-				m.input = m.input[:len(m.input)-1]
-			}
-			return m, nil
-		case tea.KeySpace:
-			m.input += " "
-			return m, nil
 		default:
-			if msg.Type == tea.KeyRunes {
-				m.input += string(msg.Runes)
-			}
-			return m, nil
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
 		}
 
 	case eventMsg:

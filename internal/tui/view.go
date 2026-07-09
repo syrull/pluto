@@ -157,9 +157,9 @@ func (m model) modelStatus() string {
 
 func (m model) footer() string {
 	if m.busy {
-		return styleHint.Render("working…")
+		return styleHint.Render("working…") + strings.Repeat("\n", inputHeight-1)
 	}
-	return stylePrompt.Render("› ") + m.input + "▏"
+	return m.input.View()
 }
 
 func (m model) liveRegion() string {
