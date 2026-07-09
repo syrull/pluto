@@ -21,4 +21,9 @@ var (
 	styleDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	styleDiffCtx = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleDiffHdr = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+
+	styleToolName   = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
+	styleToolArgs   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	styleToolBody   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleToolResult = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 )

@@ -79,31 +79,22 @@ func renderEvent(ev agent.Event) string {
 	case "text":
 		return styleModel.Render(ev.Text)
 	case "tool_call":
-		return styleTool.Render(fmt.Sprintf("→ %s(%s)", ev.Tool, ev.Text))
+		return renderToolCall(ev.Tool, ev.Text)
 	case "tool_result":
-		if ev.Tool == "write" {
-			return renderWriteResult(ev.Text)
-		}
-		return styleTool.Render(fmt.Sprintf("← %s: %s", ev.Tool, oneLine(ev.Text)))
+		return renderToolResult(ev.Tool, ev.Text)
 	case "error":
+		if ev.Tool != "" {
+			return styleErr.Render(fmt.Sprintf("✗ %s: %s", ev.Tool, ev.Text))
+		}
 		return styleErr.Render("✗ " + ev.Text)
 	default:
 		return ev.Text
 	}
 }
 
+// renderWriteResult renders a write tool's result as a diff.
 func renderWriteResult(result string) string {
-	header, body, hasBody := strings.Cut(result, "\n")
-	if !hasBody {
-		return styleTool.Render("← write: ") + styleDiffHdr.Render(header)
-	}
-	var b strings.Builder
-	b.WriteString(styleTool.Render("← write: ") + styleDiffHdr.Render(header))
-	for _, ln := range strings.Split(body, "\n") {
-		b.WriteByte('\n')
-		b.WriteString(renderDiffLine(ln))
-	}
-	return b.String()
+	return renderDiffResult("write", result)
 }
 
 func renderDiffLine(ln string) string {
