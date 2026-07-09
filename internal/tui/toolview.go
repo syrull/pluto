@@ -5,17 +5,47 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // maxResultPreviewLines caps how many lines of a multi-line tool result are
 // shown inline; the rest are summarized as "… +N more line(s)".
 const maxResultPreviewLines = 8
 
+// defaultWrapWidth is used when no terminal width is known yet.
+const defaultWrapWidth = 80
+
+// wrapBody wraps body to fit within width after accounting for prefix,
+// indenting any continuation lines under the prefix so nothing runs off screen.
+func wrapBody(prefix, body string, style lipgloss.Style, width int) string {
+	if width <= 0 {
+		width = defaultWrapWidth
+	}
+	pw := lipgloss.Width(prefix)
+	w := width - pw
+	if w < 10 {
+		w = 10
+	}
+	wrapped := style.Width(w).Render(body)
+	lines := strings.Split(wrapped, "\n")
+	indent := strings.Repeat(" ", pw)
+	for i, ln := range lines {
+		if i == 0 {
+			lines[i] = prefix + ln
+		} else {
+			lines[i] = indent + ln
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // renderToolCall renders a tool invocation with human-readable arguments
-// instead of raw JSON, e.g. "→ read(main.go:10-59)".
-func renderToolCall(toolName, argsJSON string) string {
-	return styleToolName.Render("→ "+toolName) +
-		styleToolArgs.Render("("+formatToolCallArgs(toolName, argsJSON)+")")
+// instead of raw JSON, e.g. "→ read(main.go:10-59)", wrapping long args.
+func renderToolCall(width int, toolName, argsJSON string) string {
+	prefix := styleToolName.Render("→ "+toolName) + styleToolArgs.Render("(")
+	args := formatToolCallArgs(toolName, argsJSON) + ")"
+	return wrapBody(prefix, args, styleToolArgs, width)
 }
 
 func formatToolCallArgs(toolName, raw string) string {
@@ -120,10 +150,11 @@ func formatGenericArgs(raw string) string {
 }
 
 // renderToolResult renders a tool's output: a diff for file-mutating tools,
-// otherwise a line-count summary with a bounded preview of the content.
-func renderToolResult(toolName, text string) string {
+// otherwise a line-count summary with a bounded preview of the content, all
+// wrapped to width so nothing runs off screen.
+func renderToolResult(width int, toolName, text string) string {
 	if toolName == "write" || toolName == "edit" {
-		return renderDiffResult(toolName, text)
+		return renderDiffResult(width, toolName, text)
 	}
 
 	label := styleToolResult.Render("← " + toolName + ": ")
@@ -134,7 +165,7 @@ func renderToolResult(toolName, text string) string {
 
 	lines := strings.Split(trimmed, "\n")
 	if len(lines) == 1 {
-		return label + lines[0]
+		return wrapBody(label, lines[0], lipgloss.NewStyle(), width)
 	}
 
 	shown, more := lines, 0
@@ -146,7 +177,7 @@ func renderToolResult(toolName, text string) string {
 	var b strings.Builder
 	b.WriteString(label + resultSummary(toolName, len(lines)))
 	for _, ln := range shown {
-		b.WriteString("\n  " + styleToolBody.Render(ln))
+		b.WriteString("\n" + wrapBody("  ", ln, styleToolBody, width))
 	}
 	if more > 0 {
 		b.WriteString(fmt.Sprintf("\n  %s", styleHint.Render(fmt.Sprintf("… +%d more line(s)", more))))
@@ -166,18 +197,18 @@ func resultSummary(toolName string, n int) string {
 }
 
 // renderDiffResult renders a write/edit result, whose body (if any) is
-// already a unified-style diff produced by the tool itself.
-func renderDiffResult(toolName, result string) string {
+// already a unified-style diff produced by the tool itself, wrapped to width.
+func renderDiffResult(width int, toolName, result string) string {
 	header, body, hasBody := strings.Cut(result, "\n")
 	label := styleTool.Render("← " + toolName + ": ")
 	if !hasBody {
-		return label + styleDiffHdr.Render(header)
+		return wrapBody(label, header, styleDiffHdr, width)
 	}
 	var b strings.Builder
-	b.WriteString(label + styleDiffHdr.Render(header))
+	b.WriteString(wrapBody(label, header, styleDiffHdr, width))
 	for _, ln := range strings.Split(body, "\n") {
 		b.WriteByte('\n')
-		b.WriteString(renderDiffLine(ln))
+		b.WriteString(renderDiffLine(width, ln))
 	}
 	return b.String()
 }

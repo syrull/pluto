@@ -74,14 +74,14 @@ func (m *model) renderUserLine(in string) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderEvent(ev agent.Event) string {
+func renderEvent(width int, ev agent.Event) string {
 	switch ev.Kind {
 	case "text":
 		return styleModel.Render(ev.Text)
 	case "tool_call":
-		return renderToolCall(ev.Tool, ev.Text)
+		return renderToolCall(width, ev.Tool, ev.Text)
 	case "tool_result":
-		return renderToolResult(ev.Tool, ev.Text)
+		return renderToolResult(width, ev.Tool, ev.Text)
 	case "error":
 		if ev.Tool != "" {
 			return styleErr.Render(fmt.Sprintf("✗ %s: %s", ev.Tool, ev.Text))
@@ -93,21 +93,21 @@ func renderEvent(ev agent.Event) string {
 }
 
 // renderWriteResult renders a write tool's result as a diff.
-func renderWriteResult(result string) string {
-	return renderDiffResult("write", result)
+func renderWriteResult(width int, result string) string {
+	return renderDiffResult(width, "write", result)
 }
 
-func renderDiffLine(ln string) string {
+func renderDiffLine(width int, ln string) string {
 	if ln == "" {
 		return ""
 	}
 	switch ln[0] {
 	case '+':
-		return styleDiffAdd.Render(ln)
+		return wrapBody("", ln, styleDiffAdd, width)
 	case '-':
-		return styleDiffDel.Render(ln)
+		return wrapBody("", ln, styleDiffDel, width)
 	default:
-		return styleDiffCtx.Render(ln)
+		return wrapBody("", ln, styleDiffCtx, width)
 	}
 }
 

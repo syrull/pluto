@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/llm"
@@ -67,7 +68,7 @@ func TestUpdateStreamingDeltasNoCopyPanic(t *testing.T) {
 }
 
 func TestRenderDiffLineEmpty(t *testing.T) {
-	got := renderDiffLine("")
+	got := renderDiffLine(80, "")
 	if got != "" {
 		t.Fatalf("renderDiffLine(\"\") = %q, want \"\"", got)
 	}
@@ -75,7 +76,7 @@ func TestRenderDiffLineEmpty(t *testing.T) {
 
 func TestRenderDiffLineAdded(t *testing.T) {
 	ln := "+alpha"
-	got := renderDiffLine(ln)
+	got := renderDiffLine(80, ln)
 	if !strings.Contains(got, "alpha") {
 		t.Fatalf("renderDiffLine(%q) = %q, content \"alpha\" missing", ln, got)
 	}
@@ -86,7 +87,7 @@ func TestRenderDiffLineAdded(t *testing.T) {
 
 func TestRenderDiffLineRemoved(t *testing.T) {
 	ln := "-beta"
-	got := renderDiffLine(ln)
+	got := renderDiffLine(80, ln)
 	if !strings.Contains(got, "beta") {
 		t.Fatalf("renderDiffLine(%q) = %q, content \"beta\" missing", ln, got)
 	}
@@ -97,15 +98,44 @@ func TestRenderDiffLineRemoved(t *testing.T) {
 
 func TestRenderDiffLineContext(t *testing.T) {
 	ln := " context"
-	got := renderDiffLine(ln)
+	got := renderDiffLine(80, ln)
 	if !strings.Contains(got, "context") {
 		t.Fatalf("renderDiffLine(%q) = %q, content \"context\" missing", ln, got)
 	}
 }
 
+func TestRenderDiffLineWraps(t *testing.T) {
+	ln := "+" + strings.Repeat("x", 100)
+	got := renderDiffLine(40, ln)
+	for _, l := range strings.Split(got, "\n") {
+		if w := lipgloss.Width(l); w > 40 {
+			t.Fatalf("renderDiffLine line width = %d, want <= 40:\n%q", w, l)
+		}
+	}
+}
+
+func TestRenderToolCallWrapsLongCommand(t *testing.T) {
+	args := `{"command":"` + strings.Repeat("echo hello world; ", 10) + `"}`
+	got := renderToolCall(40, "bash", args)
+	for _, l := range strings.Split(got, "\n") {
+		if w := lipgloss.Width(l); w > 40 {
+			t.Fatalf("renderToolCall line width = %d, want <= 40:\n%q", w, l)
+		}
+	}
+}
+
+func TestRenderToolResultWrapsLongLine(t *testing.T) {
+	got := renderToolResult(40, "bash", strings.Repeat("a", 200))
+	for _, l := range strings.Split(got, "\n") {
+		if w := lipgloss.Width(l); w > 40 {
+			t.Fatalf("renderToolResult line width = %d, want <= 40:\n%q", w, l)
+		}
+	}
+}
+
 func TestRenderWriteResultHeaderOnly(t *testing.T) {
 	header := "wrote 5 bytes to /tmp/file (no change)"
-	got := renderWriteResult(header)
+	got := renderWriteResult(80, header)
 
 	if !strings.Contains(got, "← write:") {
 		t.Fatalf("renderWriteResult(%q) = %q, prefix \"← write:\" missing", header, got)
@@ -125,7 +155,7 @@ func TestRenderWriteResultHeaderOnly(t *testing.T) {
 func TestRenderWriteResultWithDiff(t *testing.T) {
 	result := "wrote 10 bytes to /tmp/test (+2 -1)\nalpha\n-beta\n+BETA"
 
-	got := renderWriteResult(result)
+	got := renderWriteResult(80, result)
 
 	if !strings.Contains(got, "← write:") {
 		t.Fatalf("renderWriteResult: prefix \"← write:\" missing from:\n%q", got)

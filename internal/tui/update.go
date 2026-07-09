@@ -224,7 +224,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ev.Kind == "tool_call" {
 				m.flushStream()
 			}
-			m.lines = append(m.lines, renderEvent(ev))
+			m.lines = append(m.lines, renderEvent(m.width, ev))
 		}
 		m.syncViewport()
 		return m, listen(m.events)
