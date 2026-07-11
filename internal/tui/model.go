@@ -45,8 +45,18 @@ type model struct {
 
 	md *glamour.TermRenderer // markdown renderer, rebuilt on resize
 
-	picker *widgets.ListPicker
+	picker     *widgets.ListPicker
+	pickerKind pickerKind
 }
+
+// pickerKind identifies which setting an open ListPicker edits.
+type pickerKind int
+
+const (
+	pickerNone pickerKind = iota
+	pickerModel
+	pickerThink
+)
 
 // inputHeight is the fixed number of visible rows in the input box; longer
 // input scrolls within it rather than growing the box.

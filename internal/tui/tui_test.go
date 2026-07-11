@@ -460,11 +460,13 @@ func TestHandleCommandThinkLevelsAnthropic(t *testing.T) {
 	}
 	m := &model{agent: agent.New(ap, tool.NewRegistry(), "")}
 
-	// Bare /think cycles levels.
+	// Bare /think opens the level picker.
 	status, _ := m.handleCommand("/think")
-	if !strings.Contains(status, "extended thinking") {
-		t.Fatalf("bare /think should return thinking status, got: %s", status)
+	if status != "" || m.picker == nil || m.pickerKind != pickerThink {
+		t.Fatalf("bare /think should open the think picker, got status %q picker %v kind %v", status, m.picker, m.pickerKind)
 	}
+	m.picker = nil
+	m.pickerKind = pickerNone
 
 	// /think off disables.
 	_, _ = m.handleCommand("/think off")
@@ -473,12 +475,16 @@ func TestHandleCommandThinkLevelsAnthropic(t *testing.T) {
 		t.Fatalf("after /think off, modelStatus should show off, got: %s", status)
 	}
 
-	// /think on enables max level.
+	// /think on enables max level; the picker preselects the active level.
 	_, _ = m.handleCommand("/think on")
-	status, _ = m.handleCommand("/think")
-	if !strings.Contains(status, "extended thinking") {
-		t.Fatalf("after /think on, /think should show thinking, got: %s", status)
+	th, _ := m.agent.Thinker()
+	active := th.ThinkLevel()
+	_, _ = m.handleCommand("/think")
+	if m.picker == nil || m.picker.Selected() != string(active) {
+		t.Fatalf("bare /think should preselect active level %q, got picker %v", active, m.picker)
 	}
+	m.picker = nil
+	m.pickerKind = pickerNone
 
 	// /think with invalid level rejects.
 	status, _ = m.handleCommand("/think badlevel")

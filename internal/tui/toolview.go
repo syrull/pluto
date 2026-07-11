@@ -175,9 +175,11 @@ func renderToolResult(width int, toolName, text string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(label + resultSummary(toolName, len(lines)))
+	b.WriteString(label)
+	b.WriteString(resultSummary(toolName, len(lines)))
 	for _, ln := range shown {
-		b.WriteString("\n" + wrapBody("  ", ln, styleToolBody, width))
+		b.WriteString("\n")
+		b.WriteString(wrapBody("  ", ln, styleToolBody, width))
 	}
 	if more > 0 {
 		b.WriteString(fmt.Sprintf("\n  %s", styleHint.Render(fmt.Sprintf("… +%d more line(s)", more))))

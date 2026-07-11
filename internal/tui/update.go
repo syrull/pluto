@@ -65,6 +65,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 				return styleErr.Render("✗ no models available to switch to"), nil
 			}
 			m.picker = newModelPicker(models, sw.Model())
+			m.pickerKind = pickerModel
 			return "", nil
 		}
 		target := fields[1]
@@ -81,8 +82,9 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		}
 		levels := th.ThinkLevels()
 		if len(fields) == 1 {
-			th.SetThinkLevel(nextThinkLevel(levels, th.ThinkLevel()))
-			return renderThinkStatus(th.ThinkLevel()), nil
+			m.picker = newThinkPicker(levels, th.ThinkLevel())
+			m.pickerKind = pickerThink
+			return "", nil
 		}
 		arg := fields[1]
 		var target llm.ThinkLevel
@@ -104,14 +106,6 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	default:
 		return styleErr.Render("✗ unknown command: " + fields[0]), nil
 	}
-}
-
-func nextThinkLevel(levels []llm.ThinkLevel, cur llm.ThinkLevel) llm.ThinkLevel {
-	i := slices.Index(levels, cur)
-	if i < 0 {
-		return levels[0]
-	}
-	return levels[(i+1)%len(levels)]
 }
 
 func thinkLevelList(levels []llm.ThinkLevel) string {
@@ -163,14 +157,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.picker.Down()
 			case tea.KeyEnter:
 				target := m.picker.Selected()
+				kind := m.pickerKind
 				m.picker = nil
-				if sw, ok := m.agent.Switcher(); ok {
-					sw.SetModel(target)
-					m.lines = append(m.lines, styleHint.Render("switched to "+m.agent.ProviderName()))
+				m.pickerKind = pickerNone
+				if status := m.applyPick(kind, target); status != "" {
+					m.lines = append(m.lines, status)
 					m.syncViewport()
 				}
 			case tea.KeyEsc:
 				m.picker = nil
+				m.pickerKind = pickerNone
 			}
 			return m, nil
 		}
@@ -252,11 +248,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// applyPick applies a picker selection and returns a status line to append.
+func (m *model) applyPick(kind pickerKind, target string) string {
+	switch kind {
+	case pickerModel:
+		if sw, ok := m.agent.Switcher(); ok {
+			sw.SetModel(target)
+			return styleHint.Render("switched to " + m.agent.ProviderName())
+		}
+	case pickerThink:
+		if th, ok := m.agent.Thinker(); ok {
+			th.SetThinkLevel(llm.ThinkLevel(target))
+			return renderThinkStatus(th.ThinkLevel())
+		}
+	}
+	return ""
+}
+
 func newModelPicker(models []string, active string) *widgets.ListPicker {
 	return widgets.NewListPicker(
 		"select model — ↑/↓ move · enter switch · esc cancel",
 		models,
 		active,
+		widgets.ListStyle{Title: styleHint, Selected: stylePickSel, Item: styleModel},
+	)
+}
+
+func newThinkPicker(levels []llm.ThinkLevel, active llm.ThinkLevel) *widgets.ListPicker {
+	items := make([]string, len(levels))
+	for i, l := range levels {
+		items[i] = string(l)
+	}
+	return widgets.NewListPicker(
+		"extended thinking — ↑/↓ move · enter set · esc cancel",
+		items,
+		string(active),
 		widgets.ListStyle{Title: styleHint, Selected: stylePickSel, Item: styleModel},
 	)
 }
