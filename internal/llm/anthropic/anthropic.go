@@ -20,6 +20,9 @@ const (
 	// model has room for deep thinking plus its response. Anthropic suggests a
 	// large budget (their docs start at 64k) for these levels.
 	highEffortMaxTok = 64000
+	// requestTimeout bounds a full non-streaming request (connect + read body).
+	// Streaming uses a per-frame idle timeout instead (see streamIdleTimeout).
+	requestTimeout = 120 * time.Second
 )
 
 // legacyBudgets maps effort levels to budget_tokens for regimeLegacy models; API requires budget_tokens < max_tokens.
@@ -61,9 +64,13 @@ func New(model string) (*Provider, error) {
 		return nil, fmt.Errorf("anthropic: no credentials; set ANTHROPIC_OAUTH_TOKEN or ANTHROPIC_API_KEY")
 	}
 	return &Provider{
-		model:    model,
-		creds:    creds,
-		http:     &http.Client{Timeout: 120 * time.Second},
+		model: model,
+		creds: creds,
+		// No total Client.Timeout: it would cap streaming at a fixed wall-clock
+		// budget regardless of activity. Bounds are applied per call instead
+		// (requestTimeout for Generate, streamIdleTimeout watchdog for streams).
+		// DefaultTransport still bounds dial/TLS handshake.
+		http:     &http.Client{},
 		baseURL:  defaultBaseURL,
 		maxTok:   defaultMaxTok,
 		thinkLvl: defaultThinkLevel,
@@ -284,6 +291,8 @@ func (p *Provider) send(ctx context.Context, req wireRequest) (*http.Response, e
 
 // Generate implements llm.Provider (non-streaming).
 func (p *Provider) Generate(ctx context.Context, transcript []llm.Message, tools []llm.ToolSpec) (llm.Response, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	resp, err := p.send(ctx, p.buildRequest(transcript, tools, false))
 	if err != nil {
 		return llm.Response{}, err

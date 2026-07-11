@@ -8,11 +8,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/pluto/harness/internal/llm"
 )
 
 var _ llm.StreamingProvider = (*Provider)(nil)
+
+// streamIdleTimeout bounds how long GenerateStream waits between SSE frames
+// before treating the connection as stalled. It resets on every frame, so a
+// slow but steady stream is never aborted.
+const streamIdleTimeout = 120 * time.Second
 
 // sseEvent is an SSE event/delta payload.
 type sseEvent struct {
@@ -55,6 +62,12 @@ type blockAccumulator struct {
 
 // GenerateStream implements llm.StreamingProvider.
 func (p *Provider) GenerateStream(ctx context.Context, transcript []llm.Message, tools []llm.ToolSpec, onDelta func(llm.StreamDelta)) (llm.Response, error) {
+	// Derive a cancelable context so the idle watchdog can abort a stalled
+	// read: scanner.Scan() on resp.Body has no read deadline, so canceling the
+	// request context is what unblocks it.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	resp, err := p.send(ctx, p.buildRequest(transcript, tools, true))
 	if err != nil {
 		return llm.Response{}, err
@@ -66,19 +79,31 @@ func (p *Provider) GenerateStream(ctx context.Context, transcript []llm.Message,
 		return llm.Response{}, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(body, 500))
 	}
 
-	return parseSSE(resp.Body, onDelta)
+	return parseSSE(resp.Body, streamIdleTimeout, cancel, onDelta)
 }
 
 // parseSSE consumes an Anthropic SSE stream and assembles the final Response.
-func parseSSE(r io.Reader, onDelta func(llm.StreamDelta)) (llm.Response, error) {
+func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelta func(llm.StreamDelta)) (llm.Response, error) {
 	scanner := bufio.NewScanner(r)
 	// Allow large SSE lines (tool args / thinking can be long).
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	// Idle watchdog: if no SSE frame arrives within idle, cancel the request
+	// context to unblock the blocked scanner.Scan(). The deadline resets on
+	// every frame (see Reset in the loop), so a steady stream never trips it.
+	var timedOut atomic.Bool
+	watchdog := time.AfterFunc(idle, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	defer watchdog.Stop()
 
 	blocks := map[int]*blockAccumulator{}
 	var out llm.Response
 
 	for scanner.Scan() {
+		// Any frame — delta, ping, or keep-alive — proves the stream is live.
+		watchdog.Reset(idle)
 		line := scanner.Text()
 		// SSE frames are "event: <type>" then "data: <json>"; we only need data.
 		data, ok := strings.CutPrefix(line, "data: ")
@@ -155,7 +180,13 @@ func parseSSE(r io.Reader, onDelta func(llm.StreamDelta)) (llm.Response, error) 
 			// terminal frame
 		}
 	}
-	if err := scanner.Err(); err != nil {
+	// A watchdog cancellation surfaces as a context error on scanner.Err();
+	// report it as the idle timeout it actually is.
+	err := scanner.Err()
+	if timedOut.Load() {
+		return out, fmt.Errorf("anthropic: stream stalled: no data for %s", idle)
+	}
+	if err != nil {
 		return out, fmt.Errorf("anthropic: read stream: %w", err)
 	}
 	return out, nil
