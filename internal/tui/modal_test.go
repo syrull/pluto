@@ -131,6 +131,31 @@ func TestModalWheelScrolls(t *testing.T) {
 	}
 }
 
+func TestReadResultShowsSummaryNotContent(t *testing.T) {
+	var tm tea.Model = model{md: newRenderer(80)}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(eventMsg{Kind: "tool_call", Tool: "read", Text: `{"path":"foo.go"}`})
+	tm, _ = tm.Update(eventMsg{Kind: "tool_result", Tool: "read", Text: "1\tpackage foo\n2\t\n3\tfunc Bar() {}"})
+
+	got := tm.(model)
+	tr := got.transcript()
+	if strings.Contains(tr, "package foo") {
+		t.Fatalf("read result should not dump content inline:\n%s", tr)
+	}
+	if !strings.Contains(tr, "3 line(s)") {
+		t.Fatalf("read result should show a line-count summary:\n%s", tr)
+	}
+	if !strings.Contains(tr, "Show") {
+		t.Fatalf("read result should carry a Show button so its content is viewable:\n%s", tr)
+	}
+	if len(got.outputs) != 1 || !strings.Contains(got.outputs[0].full, "package foo") {
+		t.Fatalf("read should retain its full content for the modal, got %+v", got.outputs)
+	}
+	if !strings.Contains(got.outputs[0].title, "foo.go") {
+		t.Fatalf("read modal title = %q, want it to contain the path", got.outputs[0].title)
+	}
+}
+
 func transcriptAfterTool(t *testing.T, tool, args, result string) string {
 	t.Helper()
 	var tm tea.Model = model{md: newRenderer(80)}

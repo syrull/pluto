@@ -220,6 +220,12 @@ func renderToolResult(width int, toolName, text string) string {
 		return label + styleHint.Render("(no output)")
 	}
 
+	// A read's inline content is noise; show only the summary and keep the
+	// full text behind a [Show] modal.
+	if toolName == "read" {
+		return label + resultSummary(toolName, strings.Count(trimmed, "\n")+1)
+	}
+
 	lines := strings.Split(trimmed, "\n")
 	if len(lines) == 1 {
 		return wrapBody(label, lines[0], lipgloss.NewStyle(), width)
@@ -244,14 +250,18 @@ func renderToolResult(width int, toolName, text string) string {
 	return b.String()
 }
 
-// resultTruncated reports whether renderToolResult will collapse text's preview
-// and, if so, returns the trimmed full text worth retaining for a [Show] modal.
+// resultTruncated reports whether text has more to show than renderToolResult
+// displays inline and, if so, returns the trimmed full text for a [Show] modal.
+// A read shows no inline content, so its full text is always worth retaining.
 func resultTruncated(toolName, text string) (string, bool) {
 	if toolName == "write" || toolName == "edit" {
 		return "", false
 	}
 	trimmed := strings.TrimRight(text, "\n")
-	if trimmed == "" || strings.Count(trimmed, "\n")+1 <= maxResultPreviewLines {
+	if trimmed == "" {
+		return "", false
+	}
+	if toolName != "read" && strings.Count(trimmed, "\n")+1 <= maxResultPreviewLines {
 		return "", false
 	}
 	return trimmed, true

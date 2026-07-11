@@ -49,8 +49,11 @@ func (m *model) retainedOutput(ev agent.Event) (toolOutput, bool) {
 		return toolOutput{}, false
 	}
 	title := ev.Tool
-	if cmd := bashCommandArg(m.pendingTool, m.pendingArgs); cmd != "" {
-		title = ev.Tool + ": " + oneLine(cmd)
+	switch {
+	case ev.Tool == "read":
+		title = "read: " + formatReadArgs(m.pendingArgs)
+	case bashCommandArg(m.pendingTool, m.pendingArgs) != "":
+		title = ev.Tool + ": " + oneLine(bashCommandArg(m.pendingTool, m.pendingArgs))
 	}
 	return toolOutput{title: title, full: full}, true
 }
