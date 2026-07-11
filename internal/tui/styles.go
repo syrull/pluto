@@ -26,4 +26,15 @@ var (
 	styleToolArgs   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	styleToolBody   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleToolResult = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+
+	styleShowBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
+	styleBashBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("4")).
+			Padding(0, 1)
+	styleModalBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("6")).
+			Padding(0, 1)
+	styleModalTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 )

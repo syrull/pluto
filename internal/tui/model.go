@@ -27,14 +27,22 @@ type LoginHook struct {
 	After   func(procErr error) (status string, err error)
 }
 
+// entry is one committed transcript block, optionally tied to a retained tool
+// output (outputID > 0) so a click can reopen its full text in a modal.
+type entry struct {
+	text     string
+	outputID int
+}
+
 type model struct {
 	agent  *agent.Agent
 	login  *LoginHook
-	lines  []string       // committed transcript lines
+	lines  []entry        // committed transcript blocks
 	input  textarea.Model // current input buffer, multi-line with word wrap
 	busy   bool           // agent running; input disabled
 	events chan eventMsg  // agent → UI stream for the active Run
 	width  int
+	height int
 
 	vp    viewport.Model
 	ready bool
@@ -47,6 +55,14 @@ type model struct {
 
 	picker     *widgets.ListPicker
 	pickerKind pickerKind
+
+	// outputs retains full tool results; pendingTool/pendingArgs carry the
+	// in-flight tool call so its result can be titled and its content retained;
+	// modal is the open full-output viewer, if any.
+	outputs     []toolOutput
+	pendingTool string
+	pendingArgs string
+	modal       *widgets.Modal
 }
 
 // pickerKind identifies which setting an open ListPicker edits.
@@ -88,7 +104,7 @@ func newInput(width int) textarea.Model {
 // New builds the Bubbletea program.
 func New(a *agent.Agent, login *LoginHook) *tea.Program {
 	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80)}
-	return tea.NewProgram(m, tea.WithAltScreen())
+	return tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -104,8 +120,17 @@ func scrollKeymap() viewport.KeyMap {
 	}
 }
 
+// pushText appends a plain, non-clickable transcript block.
+func (m *model) pushText(s string) {
+	m.lines = append(m.lines, entry{text: s})
+}
+
 func (m model) transcript() string {
-	body := strings.Join(m.lines, "\n")
+	parts := make([]string, len(m.lines))
+	for i, e := range m.lines {
+		parts[i] = e.text
+	}
+	body := strings.Join(parts, "\n")
 	if live := m.liveRegion(); live != "" {
 		body += "\n" + live
 	}

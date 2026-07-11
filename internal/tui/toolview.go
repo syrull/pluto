@@ -43,9 +43,66 @@ func wrapBody(prefix, body string, style lipgloss.Style, width int) string {
 // renderToolCall renders a tool invocation with human-readable arguments
 // instead of raw JSON, e.g. "→ read(main.go:10-59)", wrapping long args.
 func renderToolCall(width int, toolName, argsJSON string) string {
+	if toolName == "bash" {
+		if box, ok := renderBashCallBox(width, argsJSON); ok {
+			return box
+		}
+	}
 	prefix := styleToolName.Render("→ "+toolName) + styleToolArgs.Render("(")
 	args := formatToolCallArgs(toolName, argsJSON) + ")"
 	return wrapBody(prefix, args, styleToolArgs, width)
+}
+
+// renderBashCallBox renders a multi-line bash command in a bordered box showing
+// the full command. Single-line commands return ok=false to keep the compact
+// inline form.
+func renderBashCallBox(width int, raw string) (string, bool) {
+	var a struct {
+		Command string `json:"command"`
+		Timeout int    `json:"timeout"`
+	}
+	if err := json.Unmarshal([]byte(raw), &a); err != nil || a.Command == "" {
+		return "", false
+	}
+	if !strings.Contains(a.Command, "\n") {
+		return "", false
+	}
+	w := width - 4
+	if w < 10 {
+		w = 10
+	}
+	hdr := styleToolName.Render("→ bash")
+	if a.Timeout > 0 {
+		hdr += styleHint.Render(fmt.Sprintf(" [timeout %ds]", a.Timeout))
+	}
+	body := styleToolArgs.Render(strings.TrimRight(a.Command, "\n"))
+	return styleBashBox.Width(w).Render(hdr + "\n" + body), true
+}
+
+// bashCommandArg extracts the raw command from a bash tool call's JSON args,
+// or "" for other tools.
+func bashCommandArg(toolName, raw string) string {
+	if toolName != "bash" {
+		return ""
+	}
+	var a struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
+		return ""
+	}
+	return a.Command
+}
+
+// writeContentArg extracts the content a write tool call wrote, from its JSON args.
+func writeContentArg(raw string) string {
+	var a struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
+		return ""
+	}
+	return a.Content
 }
 
 func formatToolCallArgs(toolName, raw string) string {
@@ -185,6 +242,19 @@ func renderToolResult(width int, toolName, text string) string {
 		b.WriteString(fmt.Sprintf("\n  %s", styleHint.Render(fmt.Sprintf("… +%d more line(s)", more))))
 	}
 	return b.String()
+}
+
+// resultTruncated reports whether renderToolResult will collapse text's preview
+// and, if so, returns the trimmed full text worth retaining for a [Show] modal.
+func resultTruncated(toolName, text string) (string, bool) {
+	if toolName == "write" || toolName == "edit" {
+		return "", false
+	}
+	trimmed := strings.TrimRight(text, "\n")
+	if trimmed == "" || strings.Count(trimmed, "\n")+1 <= maxResultPreviewLines {
+		return "", false
+	}
+	return trimmed, true
 }
 
 func resultSummary(toolName string, n int) string {

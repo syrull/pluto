@@ -113,11 +113,11 @@ func renderDiffLine(width int, ln string) string {
 
 func (m *model) flushStream() {
 	if think := strings.TrimSpace(m.streamThink); think != "" {
-		m.lines = append(m.lines, m.renderThinkBox(think))
+		m.pushText(m.renderThinkBox(think))
 		m.streamThink = ""
 	}
 	if text := strings.TrimSpace(m.streamText); text != "" {
-		m.lines = append(m.lines, m.renderMarkdown(text))
+		m.pushText(m.renderMarkdown(text))
 		m.streamText = ""
 	}
 }
@@ -142,6 +142,9 @@ func (m *model) renderThinkBox(think string) string {
 
 // View renders the transcript layout with the status line and input footer.
 func (m model) View() string {
+	if m.modal != nil && m.ready {
+		return m.modal.View()
+	}
 	footer := m.modelStatus() + "\n" + m.footer()
 	if m.picker != nil {
 		footer = m.modelStatus() + "\n" + m.picker.View()

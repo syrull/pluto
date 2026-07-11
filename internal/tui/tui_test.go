@@ -22,7 +22,7 @@ func TestFlushStreamCommitsThinkingAndText(t *testing.T) {
 
 	m.flushStream()
 
-	joined := strings.Join(m.lines, "\n")
+	joined := m.transcript()
 	if !strings.Contains(joined, "Thinking") {
 		t.Fatalf("expected a thinking header in output:\n%s", joined)
 	}
@@ -391,7 +391,7 @@ func TestViewFooterNotReady(t *testing.T) {
 
 func TestHandleCommandNewClearsTranscript(t *testing.T) {
 	ag := &agent.Agent{}
-	m := &model{agent: ag, lines: []string{"a", "b", "c"}, streamText: "x", streamThink: "y"}
+	m := &model{agent: ag, lines: []entry{{text: "a"}, {text: "b"}, {text: "c"}}, streamText: "x", streamThink: "y"}
 
 	status, cmd := m.handleCommand("/new")
 

@@ -42,6 +42,9 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	case "/new":
 		m.agent.Reset()
 		m.lines = nil
+		m.outputs = nil
+		m.pendingTool = ""
+		m.pendingArgs = ""
 		m.streamText = ""
 		m.streamThink = ""
 		return styleHint.Render("✓ started a new conversation"), nil
@@ -128,6 +131,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		m.md = newRenderer(msg.Width)
 		h := msg.Height - footerHeight
 		if h < 1 {
@@ -144,9 +148,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.SetWidth(msg.Width)
 		}
 		m.syncViewport()
+		m.resizeModal()
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.modal != nil {
+			switch msg.Type {
+			case tea.KeyCtrlC:
+				return m, tea.Quit
+			case tea.KeyEsc:
+				m.modal = nil
+			default:
+				return m, m.modal.Update(msg)
+			}
+			return m, nil
+		}
 		if m.picker != nil {
 			switch msg.Type {
 			case tea.KeyCtrlC:
@@ -161,7 +177,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.picker = nil
 				m.pickerKind = pickerNone
 				if status := m.applyPick(kind, target); status != "" {
-					m.lines = append(m.lines, status)
+					m.pushText(status)
 					m.syncViewport()
 				}
 			case tea.KeyEsc:
@@ -186,12 +202,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			in := strings.TrimSpace(m.input.Value())
-			m.lines = append(m.lines, m.renderUserLine(in))
+			m.pushText(m.renderUserLine(in))
 			m.input.Reset()
 			if strings.HasPrefix(in, "/") {
 				status, cmd := m.handleCommand(in)
 				if status != "" {
-					m.lines = append(m.lines, status)
+					m.pushText(status)
 				}
 				if cmd != nil {
 					m.busy = true
@@ -209,6 +225,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case eventMsg:
 		ev := agent.Event(msg)
 		switch ev.Kind {
@@ -216,11 +235,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamText += ev.Text
 		case "thinking_delta":
 			m.streamThink += ev.Text
+		case "tool_call":
+			m.flushStream()
+			m.pendingTool = ev.Tool
+			m.pendingArgs = ev.Text
+			m.pushText(renderToolCall(m.width, ev.Tool, ev.Text))
+		case "tool_result":
+			m.appendToolResult(ev)
 		default:
-			if ev.Kind == "tool_call" {
-				m.flushStream()
-			}
-			m.lines = append(m.lines, renderEvent(m.width, ev))
+			m.pushText(renderEvent(m.width, ev))
 		}
 		m.syncViewport()
 		return m, listen(m.events)
@@ -238,12 +261,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		status, err := m.login.After(msg.err)
 		if err != nil {
-			m.lines = append(m.lines, styleErr.Render("✗ login failed: "+err.Error()))
+			m.pushText(styleErr.Render("✗ login failed: " + err.Error()))
 		} else {
-			m.lines = append(m.lines, styleHint.Render("✓ "+status))
+			m.pushText(styleHint.Render("✓ " + status))
 		}
 		m.syncViewport()
 		return m, nil
+	}
+	return m, nil
+}
+
+// handleMouse scrolls with the wheel and, on a left click over a truncated tool
+// result, opens its full output in a modal.
+func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		return m, m.modal.Update(msg)
+	}
+	if m.picker != nil {
+		return m, nil
+	}
+	if tea.MouseEvent(msg).IsWheel() {
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
+	}
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if o, ok := m.outputAtScreen(msg.Y); ok {
+			m.openModal(o)
+		}
 	}
 	return m, nil
 }
