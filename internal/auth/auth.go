@@ -62,7 +62,7 @@ func LoginCommand() *exec.Cmd {
 func CaptureAfterLogin() (OAuthToken, error) {
 	tok, ok := readClaudeToken()
 	if !ok || tok.AccessToken == "" {
-		return OAuthToken{}, fmt.Errorf("auth: no credentials found at %s after login", claudeCredsPath())
+		return OAuthToken{}, fmt.Errorf("auth: no credentials found after login (checked %s)", credLocations())
 	}
 	if err := save(tok); err != nil {
 		return OAuthToken{}, err
@@ -70,11 +70,30 @@ func CaptureAfterLogin() (OAuthToken, error) {
 	return tok, nil
 }
 
+// readKeychain reads Claude Code's OAuth credential blob from the OS secret
+// store (the macOS login Keychain on darwin; a no-op elsewhere). It is a
+// variable so tests can stub the platform lookup.
+var readKeychain = keychainCreds
+
+// readClaudeToken loads the token Claude Code wrote at login. On macOS the
+// credentials live in the login Keychain, on Linux in a JSON file; the keychain
+// is authoritative on darwin (freshly written by `claude setup-token`), so it
+// wins over any stale file.
 func readClaudeToken() (OAuthToken, bool) {
-	data, err := os.ReadFile(claudeCredsPath())
-	if err != nil {
-		return OAuthToken{}, false
+	if data, ok := readKeychain(); ok {
+		if tok, ok := parseClaudeCreds(data); ok {
+			return tok, true
+		}
 	}
+	if data, err := os.ReadFile(claudeCredsPath()); err == nil {
+		if tok, ok := parseClaudeCreds(data); ok {
+			return tok, true
+		}
+	}
+	return OAuthToken{}, false
+}
+
+func parseClaudeCreds(data []byte) (OAuthToken, bool) {
 	var f claudeCredsFile
 	if err := json.Unmarshal(data, &f); err != nil {
 		return OAuthToken{}, false

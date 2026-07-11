@@ -22,9 +22,17 @@ func writeJSON(t *testing.T, path string, v any) {
 	}
 }
 
+func stubKeychain(t *testing.T, data []byte, ok bool) {
+	t.Helper()
+	prev := readKeychain
+	readKeychain = func() ([]byte, bool) { return data, ok }
+	t.Cleanup(func() { readKeychain = prev })
+}
+
 func TestCaptureAfterLoginCopiesClaudeToken(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	stubKeychain(t, nil, false)
 
 	future := time.Now().Add(time.Hour).UnixMilli()
 	writeJSON(t, filepath.Join(home, ".claude", ".credentials.json"), claudeCredsFile{
@@ -62,6 +70,7 @@ func TestCaptureAfterLoginCopiesClaudeToken(t *testing.T) {
 
 func TestCaptureAfterLoginNoClaudeFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	stubKeychain(t, nil, false)
 	if _, err := CaptureAfterLogin(); err == nil {
 		t.Fatal("expected error when no claude credentials exist")
 	}
@@ -89,5 +98,73 @@ func TestLoadMissing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if _, ok := Load(); ok {
 		t.Fatal("Load should return false with no store")
+	}
+}
+
+func TestCaptureAfterLoginFromKeychain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	blob, err := json.Marshal(claudeCredsFile{
+		ClaudeAIOAuth: OAuthToken{
+			AccessToken:  "kc-access",
+			RefreshToken: "kc-refresh",
+			ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+			Scopes:       []string{"user:inference"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob = append(blob, '\n') // security -w emits a trailing newline
+	stubKeychain(t, blob, true)
+
+	got, err := CaptureAfterLogin()
+	if err != nil {
+		t.Fatalf("CaptureAfterLogin: %v", err)
+	}
+	if got.AccessToken != "kc-access" || got.RefreshToken != "kc-refresh" {
+		t.Fatalf("captured token = %+v", got)
+	}
+
+	loaded, ok := Load()
+	if !ok {
+		t.Fatal("Load returned no token after capture")
+	}
+	if loaded.AccessToken != "kc-access" {
+		t.Fatalf("loaded token = %+v", loaded)
+	}
+	info, err := os.Stat(filepath.Join(home, ".pluto", "credentials.json"))
+	if err != nil {
+		t.Fatalf("store file missing: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("store perms = %o, want 600", perm)
+	}
+}
+
+func TestCaptureAfterLoginPrefersKeychain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	future := time.Now().Add(time.Hour).UnixMilli()
+	writeJSON(t, filepath.Join(home, ".claude", ".credentials.json"), claudeCredsFile{
+		ClaudeAIOAuth: OAuthToken{AccessToken: "file-token", ExpiresAt: future},
+	})
+
+	blob, err := json.Marshal(claudeCredsFile{
+		ClaudeAIOAuth: OAuthToken{AccessToken: "keychain-token", ExpiresAt: future},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubKeychain(t, blob, true)
+
+	got, err := CaptureAfterLogin()
+	if err != nil {
+		t.Fatalf("CaptureAfterLogin: %v", err)
+	}
+	if got.AccessToken != "keychain-token" {
+		t.Fatalf("captured token = %+v, want keychain-token (keychain must win over stale file)", got)
 	}
 }
