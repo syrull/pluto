@@ -67,6 +67,5 @@ func (Edit) Execute(_ context.Context, args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("edit: %w", err)
 	}
 
-	header := fmt.Sprintf("edited %s", a.Path)
-	return withDiffBody(header, old, new), nil
+	return withDiffBody(a.Path, old, new), nil
 }

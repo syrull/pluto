@@ -28,7 +28,7 @@ func TestEditSuccessfulReplacement(t *testing.T) {
 	}
 
 	// Verify result contains header.
-	if !strings.Contains(result, "edited "+filepath) {
+	if !strings.Contains(result, filepath) {
 		t.Fatalf("Edit.Execute() result missing header; got %q", result)
 	}
 
@@ -222,7 +222,7 @@ func TestEditNoChange(t *testing.T) {
 	}
 
 	// Verify result contains header and "(no change)".
-	if !strings.Contains(result, "edited "+filepath) {
+	if !strings.Contains(result, filepath) {
 		t.Fatalf("Edit.Execute() result missing header; got %q", result)
 	}
 	if !strings.Contains(result, "(no change)") {
@@ -260,7 +260,7 @@ func TestEditMultilineReplacement(t *testing.T) {
 	}
 
 	// Verify result contains header and diff.
-	if !strings.Contains(result, "edited "+filepath) {
+	if !strings.Contains(result, filepath) {
 		t.Fatalf("Edit.Execute() result missing header; got %q", result)
 	}
 	if !strings.Contains(result, "(+1 -1)") {
