@@ -68,6 +68,10 @@ func formatWriteResult(path, old, new string) string {
 	return fmt.Sprintf("%s (+%d -%d)", header, added, removed)
 }
 
+// diffContext is how many unchanged lines to keep around each change in a
+// rendered edit diff; the rest of the file is elided.
+const diffContext = 3
+
 func withDiffBody(header, old, new string) string {
 	if old == new {
 		return header + " (no change)"
@@ -77,6 +81,6 @@ func withDiffBody(header, old, new string) string {
 		return header
 	}
 	added, removed := diff.Stats(result.Lines)
-	body := diff.Format(result.Lines)
+	body := diff.Format(diff.Hunks(result.Lines, diffContext))
 	return fmt.Sprintf("%s (+%d -%d)\n%s", header, added, removed, body)
 }

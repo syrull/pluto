@@ -10,6 +10,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/pluto/harness/internal/agent"
+	"github.com/pluto/harness/internal/diff"
 )
 
 // newRenderer uses explicit style rather than glamour.WithAutoStyle() to avoid OSC 11 background-probe leaking onto stdin.
@@ -106,6 +107,8 @@ func renderDiffLine(width int, ln string) string {
 		return wrapBody("", ln, styleDiffAdd, width)
 	case '-':
 		return wrapBody("", ln, styleDiffDel, width)
+	case diff.GapOp:
+		return wrapBody("  ", ln[1:], styleHint, width)
 	default:
 		return wrapBody("", ln, styleDiffCtx, width)
 	}

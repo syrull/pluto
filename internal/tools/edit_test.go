@@ -278,6 +278,40 @@ func TestEditMultilineReplacement(t *testing.T) {
 	}
 }
 
+func TestEditLargeFileShowsHunkNotWholeFile(t *testing.T) {
+	e := Edit{}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.txt")
+
+	var lines []string
+	for i := 0; i < 60; i++ {
+		lines = append(lines, "line "+string(rune('A'+i%26))+string(rune('0'+i/26)))
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	target := lines[30]
+	args := json.RawMessage(`{"path":"` + path + `","old":"` + target + `","new":"CHANGED"}`)
+	result, err := e.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Edit.Execute() error = %v, want nil", err)
+	}
+
+	if !strings.Contains(result, "-"+target) || !strings.Contains(result, "+CHANGED") {
+		t.Fatalf("result should show the change; got:\n%s", result)
+	}
+	if strings.Contains(result, lines[0]) || strings.Contains(result, lines[59]) {
+		t.Fatalf("result should not include far-away context lines; got:\n%s", result)
+	}
+	if !strings.Contains(result, "unchanged line(s)") {
+		t.Fatalf("result should elide distant context with a gap marker; got:\n%s", result)
+	}
+	if got := strings.Count(result, "\n"); got > 12 {
+		t.Fatalf("expected a compact hunk, got %d body lines:\n%s", got, result)
+	}
+}
+
 func TestEditInvalidJSON(t *testing.T) {
 	e := Edit{}
 	args := json.RawMessage(`{invalid json}`)

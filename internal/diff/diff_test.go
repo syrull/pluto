@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"testing"
@@ -390,6 +391,57 @@ func TestComputeContextInterleaving(t *testing.T) {
 			t.Fatalf("Context interleaving: line %d Op=%c Text=%q, want Op=%c Text=%q",
 				i, line.Op, line.Text, exp.op, exp.text)
 		}
+	}
+}
+
+func TestHunksElidesDistantContext(t *testing.T) {
+	var lines []string
+	for i := 0; i < 40; i++ {
+		lines = append(lines, fmt.Sprintf("line%02d", i))
+	}
+	old := strings.Join(lines, "\n")
+	changed := append([]string(nil), lines...)
+	changed[20] = "CHANGED"
+	new := strings.Join(changed, "\n")
+
+	hunks := Hunks(Compute(old, new).Lines, 3)
+
+	added, removed := Stats(hunks)
+	if added != 1 || removed != 1 {
+		t.Fatalf("Hunks Stats = (%d, %d), want (1, 1)", added, removed)
+	}
+	var gaps, context int
+	for _, l := range hunks {
+		switch l.Op {
+		case GapOp:
+			gaps++
+		case ' ':
+			context++
+		}
+	}
+	if gaps != 2 {
+		t.Fatalf("expected a leading and trailing gap marker, got %d", gaps)
+	}
+	if context != 6 {
+		t.Fatalf("expected 2*context unchanged lines kept, got %d", context)
+	}
+}
+
+func TestHunksNoChangeReturnsNil(t *testing.T) {
+	if got := Hunks(Compute("a\nb\nc", "a\nb\nc").Lines, 3); got != nil {
+		t.Fatalf("Hunks with no change = %v, want nil", got)
+	}
+}
+
+func TestHunksKeepsSmallDiffIntact(t *testing.T) {
+	hunks := Hunks(Compute("a\nb\nc", "a\nB\nc").Lines, 3)
+	for _, l := range hunks {
+		if l.Op == GapOp {
+			t.Fatalf("small diff should have no gap markers, got %v", hunks)
+		}
+	}
+	if len(hunks) != 4 {
+		t.Fatalf("small diff Hunks = %d lines, want 4", len(hunks))
 	}
 }
 

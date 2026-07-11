@@ -1,7 +1,10 @@
 // Package diff computes and renders line-level diffs.
 package diff
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // MaxLines caps the diff computation to prevent worst-case time complexity.
 const MaxLines = 2000
@@ -136,6 +139,54 @@ func Format(lines []Line) string {
 		b.WriteString(l.Text)
 	}
 	return b.String()
+}
+
+// GapOp marks an elided run of unchanged lines in a Hunks result; its Text is a
+// short "… N unchanged line(s)" summary.
+const GapOp = '@'
+
+// Hunks trims a full diff to the regions around changes, keeping up to context
+// unchanged lines on each side and collapsing longer runs into a single GapOp
+// marker. A diff with no changes returns nil.
+func Hunks(lines []Line, context int) []Line {
+	if context < 0 {
+		context = 0
+	}
+	keep := make([]bool, len(lines))
+	changed := false
+	for i, l := range lines {
+		if l.Op != '+' && l.Op != '-' {
+			continue
+		}
+		changed = true
+		for j := i - context; j <= i+context; j++ {
+			if j >= 0 && j < len(lines) {
+				keep[j] = true
+			}
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	var out []Line
+	skipped := 0
+	flushGap := func() {
+		if skipped > 0 {
+			out = append(out, Line{Op: GapOp, Text: fmt.Sprintf("… %d unchanged line(s)", skipped)})
+			skipped = 0
+		}
+	}
+	for i, l := range lines {
+		if keep[i] {
+			flushGap()
+			out = append(out, l)
+		} else {
+			skipped++
+		}
+	}
+	flushGap()
+	return out
 }
 
 // Stats counts added and removed lines in a diff.
