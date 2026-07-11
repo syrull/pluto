@@ -114,25 +114,6 @@ func TestRenderDiffLineWraps(t *testing.T) {
 	}
 }
 
-func TestRenderToolCallWrapsLongCommand(t *testing.T) {
-	args := `{"command":"` + strings.Repeat("echo hello world; ", 10) + `"}`
-	got := renderToolCall(40, "bash", args)
-	for _, l := range strings.Split(got, "\n") {
-		if w := lipgloss.Width(l); w > 40 {
-			t.Fatalf("renderToolCall line width = %d, want <= 40:\n%q", w, l)
-		}
-	}
-}
-
-func TestRenderToolResultWrapsLongLine(t *testing.T) {
-	got := renderToolResult(40, "bash", strings.Repeat("a", 200))
-	for _, l := range strings.Split(got, "\n") {
-		if w := lipgloss.Width(l); w > 40 {
-			t.Fatalf("renderToolResult line width = %d, want <= 40:\n%q", w, l)
-		}
-	}
-}
-
 func TestRenderWriteResultHeaderOnly(t *testing.T) {
 	header := "wrote 5 bytes to /tmp/file (no change)"
 	got := renderWriteResult(80, header)

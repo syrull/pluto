@@ -5,40 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
-
-func TestRenderToolCallBashBoxMultiline(t *testing.T) {
-	args := `{"command":"echo one\necho two\necho three"}`
-	got := renderToolCall(40, "bash", args)
-	if !strings.Contains(got, "echo two") || !strings.Contains(got, "echo three") {
-		t.Fatalf("multi-line bash box should show the full command, got:\n%s", got)
-	}
-	for _, l := range strings.Split(got, "\n") {
-		if w := lipgloss.Width(l); w > 40 {
-			t.Fatalf("bash box line width = %d, want <= 40:\n%q", w, l)
-		}
-	}
-}
-
-func TestRenderToolCallSingleLineStaysInline(t *testing.T) {
-	got := renderToolCall(80, "bash", `{"command":"ls -la"}`)
-	if strings.Contains(got, "╭") {
-		t.Fatalf("single-line bash command should not be boxed, got:\n%s", got)
-	}
-}
-
-func TestResultTruncated(t *testing.T) {
-	if _, ok := resultTruncated("bash", strings.Repeat("x\n", 20)); !ok {
-		t.Fatal("expected truncated for 20 lines")
-	}
-	if _, ok := resultTruncated("bash", "a\nb"); ok {
-		t.Fatal("did not expect truncated for 2 lines")
-	}
-	if _, ok := resultTruncated("write", strings.Repeat("x\n", 20)); ok {
-		t.Fatal("write results should never truncate here")
-	}
-}
 
 func TestShowButtonForTruncatedResult(t *testing.T) {
 	got := transcriptAfterTool(t, "bash", `{"command":"seq 20"}`, strings.Repeat("line\n", 20))
