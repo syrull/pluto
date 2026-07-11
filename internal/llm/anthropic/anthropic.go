@@ -52,9 +52,10 @@ type Provider struct {
 }
 
 var (
-	_ llm.Provider   = (*Provider)(nil)
-	_ llm.Switchable = (*Provider)(nil)
-	_ llm.Thinkable  = (*Provider)(nil)
+	_ llm.Provider        = (*Provider)(nil)
+	_ llm.Switchable      = (*Provider)(nil)
+	_ llm.Thinkable       = (*Provider)(nil)
+	_ llm.ContextWindower = (*Provider)(nil)
 )
 
 // New builds a Provider for the given model, resolving credentials from the environment.
@@ -82,6 +83,9 @@ func (p *Provider) Name() string { return "anthropic/" + p.model }
 
 // Model returns the current model id.
 func (p *Provider) Model() string { return p.model }
+
+// ContextWindow reports the active model's total context window in tokens.
+func (p *Provider) ContextWindow() int { return contextWindowFor(p.model) }
 
 // SetModel switches the active model, re-clamping the effort level as needed.
 func (p *Provider) SetModel(model string) {
@@ -209,10 +213,24 @@ type wireTool struct {
 type wireResponse struct {
 	Content    []wireBlock `json:"content"`
 	StopReason string      `json:"stop_reason"`
+	Usage      *wireUsage  `json:"usage"`
 	Error      *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// wireUsage is the token accounting the Messages API attaches to a turn.
+type wireUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// contextTokens totals the prompt size, folding cache reads/writes into the input count.
+func (u wireUsage) contextTokens() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
 // buildRequest assembles the wire request, routing extended-thinking per the model regime.
@@ -417,6 +435,9 @@ func mapResponse(wire wireResponse) llm.Response {
 				ID: b.ID, Name: b.Name, Args: json.RawMessage(b.Input),
 			})
 		}
+	}
+	if wire.Usage != nil {
+		out.Usage = llm.Usage{InputTokens: wire.Usage.contextTokens(), OutputTokens: wire.Usage.OutputTokens}
 	}
 	return out
 }

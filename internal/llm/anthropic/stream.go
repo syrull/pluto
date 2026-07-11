@@ -23,11 +23,18 @@ const streamIdleTimeout = 120 * time.Second
 
 // sseEvent is an SSE event/delta payload.
 type sseEvent struct {
-	Type         string    `json:"type"`
-	Index        int       `json:"index"`
-	ContentBlock *sseBlock `json:"content_block"`
-	Delta        *sseDelta `json:"delta"`
-	Error        *sseError `json:"error"`
+	Type         string      `json:"type"`
+	Index        int         `json:"index"`
+	ContentBlock *sseBlock   `json:"content_block"`
+	Delta        *sseDelta   `json:"delta"`
+	Error        *sseError   `json:"error"`
+	Message      *sseMessage `json:"message"` // message_start carries initial usage
+	Usage        *wireUsage  `json:"usage"`   // message_delta carries final output usage
+}
+
+// sseMessage is the message envelope on a message_start frame.
+type sseMessage struct {
+	Usage *wireUsage `json:"usage"`
 }
 
 type sseBlock struct {
@@ -121,6 +128,12 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 		}
 
 		switch ev.Type {
+		case "message_start":
+			if ev.Message != nil && ev.Message.Usage != nil {
+				out.Usage.InputTokens = ev.Message.Usage.contextTokens()
+				out.Usage.OutputTokens = ev.Message.Usage.OutputTokens
+			}
+
 		case "content_block_start":
 			acc := &blockAccumulator{}
 			if ev.ContentBlock != nil {
@@ -169,6 +182,11 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 				out.ToolCalls = append(out.ToolCalls, llm.ToolCall{
 					ID: acc.toolID, Name: acc.toolName, Args: json.RawMessage(args),
 				})
+			}
+
+		case "message_delta":
+			if ev.Usage != nil {
+				out.Usage.OutputTokens = ev.Usage.OutputTokens
 			}
 
 		case "error":

@@ -49,6 +49,15 @@ type Response struct {
 	Thinking    string
 	ThinkingSig string
 	ToolCalls   []ToolCall
+	Usage       Usage
+}
+
+// Usage reports token counts for a single provider turn.
+type Usage struct {
+	// InputTokens is the full prompt size sent, including any cached tokens.
+	InputTokens int
+	// OutputTokens is the tokens generated in this turn.
+	OutputTokens int
 }
 
 // ToolSpec is the model-facing description of a tool.
@@ -76,6 +85,13 @@ type Switchable interface {
 	// SetModel switches the active model. Implementations SHOULD accept any id
 	// from Available and MAY accept others.
 	SetModel(model string)
+}
+
+// ContextWindower is an optional capability reporting the active model's total
+// context window, in tokens.
+type ContextWindower interface {
+	// ContextWindow returns the active model's context window size in tokens.
+	ContextWindow() int
 }
 
 // ThinkLevel is a named extended-thinking effort level.

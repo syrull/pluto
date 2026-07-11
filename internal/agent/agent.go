@@ -30,6 +30,7 @@ type Agent struct {
 	registry     *tool.Registry
 	systemPrompt string
 	transcript   []llm.Message
+	lastUsage    llm.Usage // token accounting from the most recent turn
 }
 
 // New constructs an Agent seeded with an optional system prompt.
@@ -44,6 +45,7 @@ func New(p llm.Provider, r *tool.Registry, systemPrompt string) *Agent {
 // Reset discards the running transcript and starts a fresh conversation.
 func (a *Agent) Reset() {
 	a.transcript = nil
+	a.lastUsage = llm.Usage{}
 	if a.systemPrompt != "" {
 		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemPrompt})
 	}
@@ -51,6 +53,17 @@ func (a *Agent) Reset() {
 
 // ProviderName returns the backend name, for display.
 func (a *Agent) ProviderName() string { return a.provider.Name() }
+
+// ContextUsage reports the tokens consumed by the most recent turn and the
+// active model's context window. ok is false when the provider cannot report a
+// context window.
+func (a *Agent) ContextUsage() (used, window int, ok bool) {
+	cw, ok := a.provider.(llm.ContextWindower)
+	if !ok {
+		return 0, 0, false
+	}
+	return a.lastUsage.InputTokens + a.lastUsage.OutputTokens, cw.ContextWindow(), true
+}
 
 // Switcher exposes the provider's runtime model-switching capability.
 func (a *Agent) Switcher() (llm.Switchable, bool) {
@@ -149,6 +162,13 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 }
 
 func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Response, streamed bool, err error) {
+	// Record usage on both return paths; skip empty reports so an error turn
+	// doesn't clobber the last good count.
+	defer func() {
+		if resp.Usage.InputTokens > 0 {
+			a.lastUsage = resp.Usage
+		}
+	}()
 	if sp, ok := a.provider.(llm.StreamingProvider); ok {
 		debug.Logf("llm", "GenerateStream: %d msg(s), %d tool spec(s)", len(a.transcript), len(a.specs()))
 		resp, err = sp.GenerateStream(ctx, a.transcript, a.specs(), func(d llm.StreamDelta) {

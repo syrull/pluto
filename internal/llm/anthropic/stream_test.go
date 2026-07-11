@@ -11,7 +11,7 @@ import (
 )
 
 const sseFixture = `event: message_start
-data: {"type":"message_start","message":{"content":[],"stop_reason":null}}
+data: {"type":"message_start","message":{"content":[],"stop_reason":null,"usage":{"input_tokens":1200,"output_tokens":1,"cache_read_input_tokens":300}}}
 
 event: content_block_start
 data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
@@ -53,7 +53,7 @@ event: content_block_stop
 data: {"type":"content_block_stop","index":2}
 
 event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":42}}
 
 event: message_stop
 data: {"type":"message_stop"}
@@ -94,6 +94,14 @@ func TestParseSSEAssemblesTurn(t *testing.T) {
 	tc := resp.ToolCalls[0]
 	if tc.ID != "toolu_1" || tc.Name != "read" || string(tc.Args) != `{"path": "a.txt"}` {
 		t.Fatalf("tool call = %+v args=%s", tc, tc.Args)
+	}
+
+	// message_start input (with cache reads folded in) + message_delta output.
+	if resp.Usage.InputTokens != 1500 {
+		t.Fatalf("resp.Usage.InputTokens = %d, want 1500", resp.Usage.InputTokens)
+	}
+	if resp.Usage.OutputTokens != 42 {
+		t.Fatalf("resp.Usage.OutputTokens = %d, want 42", resp.Usage.OutputTokens)
 	}
 }
 

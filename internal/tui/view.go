@@ -163,7 +163,7 @@ func (m model) modelStatus() string {
 	if m.agent != nil {
 		name = m.agent.ProviderName()
 	}
-	status := "model: " + name
+	status := name
 	if m.agent != nil {
 		if th, ok := m.agent.Thinker(); ok {
 			level := th.ThinkLevel()
@@ -173,8 +173,29 @@ func (m model) modelStatus() string {
 				status += " · thinking: off"
 			}
 		}
+		if used, window, ok := m.agent.ContextUsage(); ok && window > 0 {
+			pct := used * 100 / window
+			status += fmt.Sprintf(" · context: %d%% / %s", pct, formatTokens(window))
+		}
 	}
 	return styleModelStatus.Render(status)
+}
+
+// formatTokens renders a token count compactly (e.g. 1000000 → "1M", 200000 → "200K").
+func formatTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return trimZero(float64(n)/1_000_000) + "M"
+	case n >= 1_000:
+		return trimZero(float64(n)/1_000) + "K"
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// trimZero formats v with one decimal, dropping a trailing ".0".
+func trimZero(v float64) string {
+	return strings.TrimSuffix(fmt.Sprintf("%.1f", v), ".0")
 }
 
 func (m model) footer() string {

@@ -181,16 +181,41 @@ func TestCredentialHeaders(t *testing.T) {
 }
 
 func TestMapResponse(t *testing.T) {
-	wire := wireResponse{Content: []wireBlock{
-		{Type: "text", Text: "sure"},
-		{Type: "tool_use", ID: "u1", Name: "write", Input: json.RawMessage(`{"path":"p"}`)},
-	}}
+	wire := wireResponse{
+		Content: []wireBlock{
+			{Type: "text", Text: "sure"},
+			{Type: "tool_use", ID: "u1", Name: "write", Input: json.RawMessage(`{"path":"p"}`)},
+		},
+		Usage: &wireUsage{InputTokens: 1000, OutputTokens: 25, CacheReadInputTokens: 500},
+	}
 	got := mapResponse(wire)
 	if got.Text != "sure" {
 		t.Fatalf("text = %q", got.Text)
 	}
 	if len(got.ToolCalls) != 1 || got.ToolCalls[0].ID != "u1" || got.ToolCalls[0].Name != "write" {
 		t.Fatalf("tool calls = %+v", got.ToolCalls)
+	}
+	if got.Usage.InputTokens != 1500 || got.Usage.OutputTokens != 25 {
+		t.Fatalf("usage = %+v, want input 1500 output 25", got.Usage)
+	}
+}
+
+func TestContextWindow(t *testing.T) {
+	p := &Provider{model: "claude-sonnet-5"}
+	if got := p.ContextWindow(); got != 1_000_000 {
+		t.Fatalf("sonnet-5 context window = %d, want 1000000", got)
+	}
+	p.model = "claude-opus-4-8"
+	if got := p.ContextWindow(); got != 1_000_000 {
+		t.Fatalf("opus-4-8 context window = %d, want 1000000", got)
+	}
+	p.model = "claude-haiku-4-5"
+	if got := p.ContextWindow(); got != 200_000 {
+		t.Fatalf("haiku-4-5 context window = %d, want 200000", got)
+	}
+	p.model = "unknown-model"
+	if got := p.ContextWindow(); got != defaultContextWindow {
+		t.Fatalf("unknown model context window = %d, want %d", got, defaultContextWindow)
 	}
 }
 

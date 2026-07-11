@@ -10,6 +10,25 @@ var Models = []string{
 // DefaultModel is the model New callers should use when none is specified.
 const DefaultModel = "claude-opus-4-8"
 
+// defaultContextWindow is the fallback context window for uncatalogued models.
+const defaultContextWindow = 200_000
+
+// modelContextWindows maps each model to its total context window in tokens.
+var modelContextWindows = map[string]int{
+	"claude-opus-4-8":   1_000_000,
+	"claude-sonnet-5":   1_000_000,
+	"claude-sonnet-4-5": 200_000,
+	"claude-haiku-4-5":  200_000,
+}
+
+// contextWindowFor returns the context window for a model id.
+func contextWindowFor(model string) int {
+	if w, ok := modelContextWindows[model]; ok {
+		return w
+	}
+	return defaultContextWindow
+}
+
 // Available returns the catalog. Implements the llm.Switchable contract.
 func (p *Provider) Available() []string { return Models }
 

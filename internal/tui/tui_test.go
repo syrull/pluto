@@ -440,6 +440,44 @@ func TestModelStatusNoAgent(t *testing.T) {
 	}
 }
 
+func TestModelStatusContextWindow(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	ap, err := anthropic.New("claude-sonnet-5")
+	if err != nil {
+		t.Fatalf("anthropic.New: %v", err)
+	}
+	m := &model{agent: agent.New(ap, tool.NewRegistry(), "")}
+
+	status := m.modelStatus()
+	if !strings.Contains(status, "context: 0% / 1M") {
+		t.Fatalf("modelStatus should show context 0%% / 1M before any turn, got:\n%s", status)
+	}
+}
+
+func TestFormatTokens(t *testing.T) {
+	cases := map[int]string{
+		0:         "0",
+		999:       "999",
+		1_000:     "1K",
+		200_000:   "200K",
+		1_500:     "1.5K",
+		1_000_000: "1M",
+		1_500_000: "1.5M",
+	}
+	for n, want := range cases {
+		if got := formatTokens(n); got != want {
+			t.Fatalf("formatTokens(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestModelStatusStubNoContext(t *testing.T) {
+	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), "")}
+	if status := m.modelStatus(); strings.Contains(status, "context:") {
+		t.Fatalf("stub provider has no context window; status should omit it, got:\n%s", status)
+	}
+}
+
 func TestHandleCommandThinkUnsupported(t *testing.T) {
 	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), "")}
 	status, cmd := m.handleCommand("/think")
