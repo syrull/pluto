@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/pluto/harness/internal/tui/widgets"
 )
 
 // maxResultPreviewLines caps how many lines of a multi-line tool result are
@@ -27,7 +29,7 @@ func wrapBody(prefix, body string, style lipgloss.Style, width int) string {
 	if w < 10 {
 		w = 10
 	}
-	wrapped := style.Width(w).Render(body)
+	wrapped := style.Width(w).Render(widgets.Sanitize(body))
 	lines := strings.Split(wrapped, "\n")
 	indent := strings.Repeat(" ", pw)
 	for i, ln := range lines {
@@ -75,7 +77,7 @@ func renderBashCallBox(width int, raw string) (string, bool) {
 	if a.Timeout > 0 {
 		hdr += styleHint.Render(fmt.Sprintf(" [timeout %ds]", a.Timeout))
 	}
-	body := styleToolArgs.Render(strings.TrimRight(a.Command, "\n"))
+	body := styleToolArgs.Render(widgets.Sanitize(strings.TrimRight(a.Command, "\n")))
 	return styleBashBox.Width(w).Render(hdr + "\n" + body), true
 }
 

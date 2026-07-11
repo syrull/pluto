@@ -27,7 +27,7 @@ type Modal struct {
 
 // NewModal builds a modal over content; call SetSize before View.
 func NewModal(title, content string, style ModalStyle) *Modal {
-	m := &Modal{title: title, content: content, style: style, vp: viewport.New(0, 0)}
+	m := &Modal{title: Sanitize(title), content: Sanitize(content), style: style, vp: viewport.New(0, 0)}
 	m.vp.KeyMap = modalKeyMap()
 	return m
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/diff"
+	"github.com/pluto/harness/internal/tui/widgets"
 )
 
 // newRenderer uses explicit style rather than glamour.WithAutoStyle() to avoid OSC 11 background-probe leaking onto stdin.
@@ -85,11 +86,11 @@ func renderEvent(width int, ev agent.Event) string {
 		return renderToolResult(width, ev.Tool, ev.Text)
 	case "error":
 		if ev.Tool != "" {
-			return styleErr.Render(fmt.Sprintf("✗ %s: %s", ev.Tool, ev.Text))
+			return styleErr.Render(fmt.Sprintf("✗ %s: %s", ev.Tool, widgets.Sanitize(ev.Text)))
 		}
-		return styleErr.Render("✗ " + ev.Text)
+		return styleErr.Render("✗ " + widgets.Sanitize(ev.Text))
 	default:
-		return ev.Text
+		return widgets.Sanitize(ev.Text)
 	}
 }
 
