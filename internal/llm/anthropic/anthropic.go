@@ -36,7 +36,7 @@ var effortOrder = []llm.ThinkLevel{
 	llm.ThinkLow, llm.ThinkMedium, llm.ThinkHigh, llm.ThinkXHigh, llm.ThinkMax,
 }
 
-const defaultThinkLevel = llm.ThinkHigh
+const defaultThinkLevel = llm.ThinkXHigh
 
 // Provider talks to the Anthropic Messages API.
 type Provider struct {

@@ -8,7 +8,7 @@ var Models = []string{
 }
 
 // DefaultModel is the model New callers should use when none is specified.
-const DefaultModel = "claude-sonnet-5"
+const DefaultModel = "claude-opus-4-8"
 
 // Available returns the catalog. Implements the llm.Switchable contract.
 func (p *Provider) Available() []string { return Models }
