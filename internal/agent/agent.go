@@ -12,6 +12,16 @@ import (
 
 const maxSteps = 1000
 
+const (
+	// defaultContextBudget caps the transcript sent per turn when the provider
+	// can't report a context window, and also caps the derived budget on
+	// large-window models so long sessions don't re-send an unbounded history.
+	defaultContextBudget = 200_000
+	// contextBudgetFraction trims once the transcript would exceed this share of
+	// the model's context window.
+	contextBudgetFraction = 0.8
+)
+
 // Event is an observable step emitted during Run, for UIs to render progress.
 type Event struct {
 	// Kind is one of: "text", "text_delta", "thinking_delta", "tool_review",
@@ -59,6 +69,17 @@ func WithGate(g Gate) Option {
 	}
 }
 
+// WithContextLimit caps the approximate token size of the transcript re-sent on
+// each turn; older exchanges are dropped once it is exceeded. A non-positive
+// value falls back to the window-derived default.
+func WithContextLimit(tokens int) Option {
+	return func(a *Agent) {
+		if tokens > 0 {
+			a.contextLimit = tokens
+		}
+	}
+}
+
 // Agent owns a provider, a tool registry, and the running transcript.
 type Agent struct {
 	provider     llm.Provider
@@ -67,6 +88,7 @@ type Agent struct {
 	transcript   []llm.Message
 	lastUsage    llm.Usage // token accounting from the most recent turn
 	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
+	contextLimit int       // token budget for the re-sent transcript; 0 ⇒ derive from window
 }
 
 // New constructs an Agent seeded with an optional system prompt.
@@ -138,6 +160,7 @@ func (a *Agent) specs() []llm.ToolSpec {
 func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string, error) {
 	debug.Logf("agent", "run input=%q provider=%s", truncate(input, 256), a.provider.Name())
 	a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: input})
+	a.trimTranscript()
 
 	for step := range maxSteps {
 		debug.Logf("agent", "step %d/%d", step+1, maxSteps)
@@ -221,6 +244,78 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 	err := fmt.Errorf("agent: exceeded %d steps without completing", maxSteps)
 	emit(Event{Kind: "error", Text: err.Error()})
 	return "", err
+}
+
+// contextBudget is the approximate token ceiling for the re-sent transcript.
+func (a *Agent) contextBudget() int {
+	if a.contextLimit > 0 {
+		return a.contextLimit
+	}
+	budget := defaultContextBudget
+	if cw, ok := a.provider.(llm.ContextWindower); ok {
+		if w := cw.ContextWindow(); w > 0 {
+			if scaled := int(float64(w) * contextBudgetFraction); scaled < budget {
+				budget = scaled
+			}
+		}
+	}
+	return budget
+}
+
+// trimTranscript drops the oldest exchanges once the transcript's estimated token
+// size exceeds the context budget. It cuts only at human-input boundaries so
+// tool_use/tool_result pairs and each assistant turn's leading thinking block stay
+// intact, always keeps the leading system message, and never trims the in-progress
+// exchange (the most recent user turn onward).
+func (a *Agent) trimTranscript() {
+	budget := a.contextBudget()
+	if budget <= 0 || estimateTokens(a.transcript) <= budget {
+		return
+	}
+
+	var boundaries []int // indices where a human turn begins
+	for i, m := range a.transcript {
+		if m.Role == llm.RoleUser {
+			boundaries = append(boundaries, i)
+		}
+	}
+	if len(boundaries) <= 1 {
+		return // only the current exchange remains; nothing safe to drop
+	}
+
+	var head []llm.Message
+	if a.transcript[0].Role == llm.RoleSystem {
+		head = a.transcript[:1]
+	}
+	headTokens := estimateTokens(head)
+
+	keepFrom := boundaries[len(boundaries)-1] // always keep the current exchange
+	for i := len(boundaries) - 2; i >= 0; i-- {
+		if headTokens+estimateTokens(a.transcript[boundaries[i]:]) > budget {
+			break
+		}
+		keepFrom = boundaries[i]
+	}
+
+	trimmed := make([]llm.Message, 0, len(head)+len(a.transcript)-keepFrom)
+	trimmed = append(trimmed, head...)
+	trimmed = append(trimmed, a.transcript[keepFrom:]...)
+	debug.Logf("agent", "trimmed transcript %d→%d msgs (budget %d tok)", len(a.transcript), len(trimmed), budget)
+	a.transcript = trimmed
+}
+
+// estimateTokens approximates the token size of a slice of messages. Without a
+// local tokenizer it uses a bytes/4 heuristic over all content that gets re-sent
+// (text, thinking, and tool-call arguments), plus a small per-message overhead.
+func estimateTokens(msgs []llm.Message) int {
+	chars := 0
+	for _, m := range msgs {
+		chars += len(m.Content) + len(m.Thinking) + 16
+		for _, c := range m.ToolCalls {
+			chars += len(c.Args) + len(c.Name)
+		}
+	}
+	return chars / 4
 }
 
 func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Response, streamed bool, err error) {

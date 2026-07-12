@@ -212,9 +212,20 @@ type wireOutputConfig struct {
 	Effort string `json:"effort,omitempty"`
 }
 
+// wireCacheControl marks a content block as a prompt-cache breakpoint. Everything
+// from the start of the prompt up to and including a marked block is cached;
+// subsequent requests reuse it at ~10% of input price. Type is always "ephemeral".
+type wireCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
+// ephemeral returns a 5-minute cache breakpoint marker.
+func ephemeral() *wireCacheControl { return &wireCacheControl{Type: "ephemeral"} }
+
 type wireSysText struct {
-	Type string `json:"type"` // "text"
-	Text string `json:"text"`
+	Type         string            `json:"type"` // "text"
+	Text         string            `json:"text"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireMessage struct {
@@ -245,6 +256,9 @@ type wireBlock struct {
 
 	// text citations (server-side web search); inbound only
 	Citations []wireCitation `json:"citations,omitempty"`
+
+	// prompt-cache breakpoint (outbound only)
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 // wireCitation is a web_search_result_location attached to a text block.
@@ -258,11 +272,12 @@ type wireCitation struct {
 // (Type/Name plus tool-specific fields like MaxUses). omitempty keeps each
 // variant's JSON minimal so the API sees only the fields it expects.
 type wireTool struct {
-	Type        string          `json:"type,omitempty"`
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema,omitempty"`
-	MaxUses     int             `json:"max_uses,omitempty"`
+	Type         string            `json:"type,omitempty"`
+	Name         string            `json:"name"`
+	Description  string            `json:"description,omitempty"`
+	InputSchema  json.RawMessage   `json:"input_schema,omitempty"`
+	MaxUses      int               `json:"max_uses,omitempty"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
 }
 
 type wireResponse struct {
@@ -313,7 +328,32 @@ func (p *Provider) buildRequest(transcript []llm.Message, tools []llm.ToolSpec, 
 	case regimeNone:
 		// no thinking control available
 	}
+	applyCacheBreakpoints(&req)
 	return req
+}
+
+// applyCacheBreakpoints marks prompt-cache breakpoints so repeated requests in a
+// session reuse the stable prefix instead of re-billing it every turn. Anthropic
+// caching is opt-in: without these markers nothing is cached. Placement (max 4
+// breakpoints, render order tools→system→messages):
+//   - the last system block, which caches the whole tools+system prefix (the big
+//     static chunk: tool schemas, base prompt, project context);
+//   - the last block of each of the final two messages, a rolling window so the
+//     growing conversation is cached turn-over-turn and the previous turn's write
+//     stays within the 20-block lookback.
+func applyCacheBreakpoints(req *wireRequest) {
+	if n := len(req.System); n > 0 {
+		req.System[n-1].CacheControl = ephemeral()
+	} else if n := len(req.Tools); n > 0 {
+		// No system blocks: cache the tool prefix directly.
+		req.Tools[n-1].CacheControl = ephemeral()
+	}
+	msgs := req.Messages
+	for i := len(msgs) - 1; i >= 0 && i >= len(msgs)-2; i-- {
+		if c := msgs[i].Content; len(c) > 0 {
+			c[len(c)-1].CacheControl = ephemeral()
+		}
+	}
 }
 
 // applyAdaptiveThinking sets the adaptive thinking block and effort level.

@@ -46,6 +46,46 @@ func TestBuildMessagesCoalescesToolResults(t *testing.T) {
 	}
 }
 
+func TestCacheBreakpoints(t *testing.T) {
+	p := &Provider{model: "claude-opus-4-8", maxTok: defaultMaxTok, thinkLvl: llm.ThinkNone}
+	transcript := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "one"},
+		{Role: llm.RoleModel, Content: "reply one"},
+		{Role: llm.RoleUser, Content: "two"},
+	}
+	tools := []llm.ToolSpec{{Name: "read", Description: "reads", Schema: json.RawMessage(`{"type":"object"}`)}}
+
+	req := p.buildRequest(transcript, tools, false)
+
+	// Last system block carries the tools+system breakpoint.
+	if n := len(req.System); n == 0 || req.System[n-1].CacheControl == nil {
+		t.Fatalf("last system block not marked ephemeral: %+v", req.System)
+	}
+	if req.System[0].CacheControl != nil && len(req.System) > 1 {
+		t.Fatalf("only the last system block should be marked, got marker on block 0")
+	}
+
+	// The final two messages get a rolling breakpoint on their last block.
+	msgs := req.Messages
+	if n := len(msgs); n < 2 {
+		t.Fatalf("want >=2 messages, got %d", n)
+	}
+	for _, i := range []int{len(msgs) - 1, len(msgs) - 2} {
+		c := msgs[i].Content
+		if len(c) == 0 || c[len(c)-1].CacheControl == nil {
+			t.Fatalf("message %d last block not marked ephemeral: %+v", i, c)
+		}
+	}
+	// An earlier message must not be marked (max 4 breakpoints; rolling window is 2).
+	if n := len(msgs); n >= 3 {
+		c := msgs[n-3].Content
+		if len(c) > 0 && c[len(c)-1].CacheControl != nil {
+			t.Fatalf("message %d should not be marked", n-3)
+		}
+	}
+}
+
 func TestAdaptiveThinkingWire(t *testing.T) {
 	p := &Provider{model: "claude-sonnet-5", maxTok: defaultMaxTok, thinkLvl: llm.ThinkHigh}
 

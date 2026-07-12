@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/syrull/pluto/internal/agent"
@@ -82,7 +83,10 @@ func main() {
 
 	provider := selectProvider()
 
-	ag := agent.New(provider, reg, buildSystemPrompt(reg), agent.WithGate(buildGate()))
+	ag := agent.New(provider, reg, buildSystemPrompt(reg),
+		agent.WithGate(buildGate()),
+		agent.WithContextLimit(contextLimit()),
+	)
 	if _, err := tui.New(ag, buildLoginHook(ag)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "harness:", err)
 		os.Exit(1)
@@ -150,6 +154,17 @@ func judgeModel() string {
 		return m
 	}
 	return anthropic.DefaultJudgeModel
+}
+
+// contextLimit reads HARNESS_CONTEXT_LIMIT (approx tokens of transcript to re-send
+// per turn). 0 (unset/invalid) lets the agent derive a budget from the model window.
+func contextLimit() int {
+	if v := strings.TrimSpace(os.Getenv("HARNESS_CONTEXT_LIMIT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // buildGate constructs the auto-mode review gate. It returns nil (allow-all)

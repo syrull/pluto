@@ -94,6 +94,45 @@ func TestResetWithoutSystemPromptLeavesEmptyTranscript(t *testing.T) {
 	}
 }
 
+func TestTrimTranscriptDropsOldestAtUserBoundary(t *testing.T) {
+	big := strings.Repeat("x", 800) // ~204 est. tokens per message
+	base := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "u1 " + big},
+		{Role: llm.RoleModel, Content: "m1 " + big, ToolCalls: []llm.ToolCall{{ID: "t1", Name: "read", Args: []byte(`{}`)}}},
+		{Role: llm.RoleTool, ToolCallID: "t1", ToolName: "read", Content: "r1 " + big},
+		{Role: llm.RoleUser, Content: "u2 " + big},
+		{Role: llm.RoleModel, Content: "m2 " + big},
+		{Role: llm.RoleUser, Content: "u3 " + big},
+	}
+
+	// Budget fits the last two human exchanges but not all three.
+	a := &Agent{provider: llm.Stub{}, contextLimit: 700}
+	a.transcript = slices.Clone(base)
+	a.trimTranscript()
+
+	if a.transcript[0].Role != llm.RoleSystem {
+		t.Fatalf("system message dropped: %+v", a.transcript[0])
+	}
+	if a.transcript[1].Role != llm.RoleUser {
+		t.Fatalf("first post-system message = %v, want a user boundary (no orphaned tool_result)", a.transcript[1].Role)
+	}
+	if !strings.HasPrefix(a.transcript[1].Content, "u2 ") {
+		t.Fatalf("kept from %q, want the u2 exchange", a.transcript[1].Content[:3])
+	}
+	if got := a.transcript[len(a.transcript)-1].Content; !strings.HasPrefix(got, "u3 ") {
+		t.Fatalf("current exchange dropped; last = %q", got[:3])
+	}
+
+	// A tiny budget still keeps the whole current exchange rather than break it.
+	a.transcript = slices.Clone(base)
+	a.contextLimit = 10
+	a.trimTranscript()
+	if len(a.transcript) != 2 || a.transcript[1].Role != llm.RoleUser {
+		t.Fatalf("tiny budget = %d msgs, want [system, u3]", len(a.transcript))
+	}
+}
+
 func kinds(evs []Event) string {
 	parts := make([]string, len(evs))
 	for i, e := range evs {
