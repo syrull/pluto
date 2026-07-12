@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -51,7 +52,7 @@ func buildSystemPrompt(reg *tool.Registry) string {
 			// Missing/unreadable context files are expected; skip silently.
 			continue
 		}
-	content := strings.TrimSpace(string(data))
+		content := strings.TrimSpace(string(data))
 		if content == "" {
 			continue
 		}
@@ -84,35 +85,51 @@ func main() {
 	}
 }
 
-// buildLoginHook wires /login: it runs `claude setup-token`, then captures the
-// minted token and either reauths the running Anthropic provider or upgrades
-// the agent from the stub to a fresh authenticated provider.
+// buildLoginHook wires /login to the Anthropic OAuth flow: it builds the PKCE
+// authorization URL, waits on a local callback server (with a manual paste
+// fallback), exchanges/persists the token, and re-authenticates the live
+// provider (upgrading from the offline stub if needed).
 func buildLoginHook(ag *agent.Agent) *tui.LoginHook {
-	return &tui.LoginHook{
-		Command: auth.LoginCommand,
-		After: func(procErr error) (string, error) {
-			if procErr != nil {
-				return "", fmt.Errorf("login process: %w", procErr)
-			}
-			if _, err := auth.CaptureAfterLogin(); err != nil {
-				return "", err
-			}
-			// Upgrade or reauth the live provider.
-			if sw, ok := ag.Switcher(); ok {
-				if p, isAnthropic := sw.(*anthropic.Provider); isAnthropic {
-					if err := p.Reauth(); err != nil {
-						return "", err
-					}
-					return "logged in — " + ag.ProviderName(), nil
+	reauth := func() (string, error) {
+		if sw, ok := ag.Switcher(); ok {
+			if p, isAnthropic := sw.(*anthropic.Provider); isAnthropic {
+				if err := p.Reauth(); err != nil {
+					return "", err
 				}
+				return "logged in — " + ag.ProviderName(), nil
 			}
-			// Current provider is the stub (or non-anthropic): build a fresh one.
-			p, err := anthropic.New(defaultModel())
-			if err != nil {
+		}
+		p, err := anthropic.New(defaultModel())
+		if err != nil {
+			return "", err
+		}
+		ag.SetProvider(p)
+		return "logged in — upgraded to " + ag.ProviderName(), nil
+	}
+	return &tui.LoginHook{
+		Authorize: func() (string, any, error) {
+			url, flow, err := auth.AuthorizeURL()
+			return url, flow, err
+		},
+		Wait: func(flow any) (string, error) {
+			f, ok := flow.(*auth.Flow)
+			if !ok {
+				return "", fmt.Errorf("login: invalid flow handle")
+			}
+			if _, err := f.WaitForCallback(context.Background()); err != nil {
 				return "", err
 			}
-			ag.SetProvider(p)
-			return "logged in — upgraded to " + ag.ProviderName(), nil
+			return reauth()
+		},
+		Complete: func(flow any, pasted string) (string, error) {
+			f, ok := flow.(*auth.Flow)
+			if !ok {
+				return "", fmt.Errorf("login: invalid flow handle")
+			}
+			if _, err := f.Complete(context.Background(), pasted); err != nil {
+				return "", err
+			}
+			return reauth()
 		},
 	}
 }

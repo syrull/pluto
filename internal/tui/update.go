@@ -53,9 +53,33 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		if m.login == nil {
 			return styleErr.Render("✗ login is not available in this build"), nil
 		}
-		cmd := m.login.Command()
-		return styleHint.Render("launching Anthropic login (claude setup-token)…"),
-			tea.ExecProcess(cmd, func(err error) tea.Msg { return loginDoneMsg{err: err} })
+		// Manual paste fallback: `/login <redirect-url-or-code>` completes a
+		// pending flow when the browser is on another machine.
+		if len(fields) > 1 {
+			if m.loginFlow == nil {
+				return styleErr.Render("✗ no login in progress — run /login first"), nil
+			}
+			flow := m.loginFlow
+			pasted := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+			return styleHint.Render("completing login…"), func() tea.Msg {
+				status, err := m.login.Complete(flow, pasted)
+				return loginDoneMsg{status: status, err: err}
+			}
+		}
+		url, flow, err := m.login.Authorize()
+		if err != nil {
+			return styleErr.Render("✗ login failed: " + err.Error()), nil
+		}
+		m.loginFlow = flow
+		openBrowser(url)
+		hint := "opening browser to authorize with Anthropic…\n" +
+			styleToolArgs.Render(url) + "\n" +
+			"If the browser is on another machine, complete login there and run:\n" +
+			styleToolArgs.Render("/login <paste the redirect URL or code>")
+		return styleHint.Render(hint), func() tea.Msg {
+			status, err := m.login.Wait(flow)
+			return loginDoneMsg{status: status, err: err}
+		}
 
 	case "/model":
 		sw, ok := m.agent.Switcher()
@@ -256,14 +280,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case loginDoneMsg:
 		m.busy = false
-		if m.login == nil {
-			return m, nil
-		}
-		status, err := m.login.After(msg.err)
-		if err != nil {
-			m.pushText(styleErr.Render("✗ login failed: " + err.Error()))
+		m.loginFlow = nil
+		if msg.err != nil {
+			m.pushText(styleErr.Render("✗ login failed: " + msg.err.Error()))
 		} else {
-			m.pushText(styleHint.Render("✓ " + status))
+			m.pushText(styleHint.Render("✓ " + msg.status))
 		}
 		m.syncViewport()
 		return m, nil

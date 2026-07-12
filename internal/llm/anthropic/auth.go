@@ -2,6 +2,7 @@
 package anthropic
 
 import (
+	"context"
 	"net/http"
 	"os"
 
@@ -39,7 +40,7 @@ func resolveCredentials() credentials {
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
 		return credentials{mode: authAPIKey, token: key}
 	}
-	if tok, ok := auth.Load(); ok && tok.Valid() {
+	if tok, ok := auth.LoadValid(context.Background()); ok {
 		return credentials{mode: authOAuth, token: tok.AccessToken}
 	}
 	return credentials{mode: authNone}

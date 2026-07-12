@@ -1,18 +1,19 @@
 // Package auth manages the harness's Anthropic OAuth credentials.
+//
+// Authentication mirrors pi's Claude Pro/Max flow: the harness runs its own
+// PKCE authorization-code flow (see oauth.go), stores the minted access/refresh
+// pair, and silently refreshes the access token via the refresh token when it
+// expires — so the user does not have to re-login on every expiry.
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
-
-func claudeCredsPath() string {
-	return filepath.Join(homeDir(), ".claude", ".credentials.json")
-}
 
 func storePath() string {
 	return filepath.Join(homeDir(), ".pluto", "credentials.json")
@@ -23,10 +24,6 @@ func homeDir() string {
 		return h
 	}
 	return "."
-}
-
-type claudeCredsFile struct {
-	ClaudeAIOAuth OAuthToken `json:"claudeAiOauth"`
 }
 
 // OAuthToken is a Claude Code OAuth credential.
@@ -53,52 +50,26 @@ func Load() (OAuthToken, bool) {
 	return readToken(storePath())
 }
 
-// LoginCommand returns the *exec.Cmd that performs the interactive login.
-func LoginCommand() *exec.Cmd {
-	return exec.Command("claude", "setup-token")
-}
-
-// CaptureAfterLogin reads the token Claude Code just wrote and copies it into the harness store.
-func CaptureAfterLogin() (OAuthToken, error) {
-	tok, ok := readClaudeToken()
-	if !ok || tok.AccessToken == "" {
-		return OAuthToken{}, fmt.Errorf("auth: no credentials found after login (checked %s)", credLocations())
-	}
-	if err := save(tok); err != nil {
-		return OAuthToken{}, err
-	}
-	return tok, nil
-}
-
-// readKeychain reads Claude Code's OAuth credential blob from the OS secret
-// store (the macOS login Keychain on darwin; a no-op elsewhere). It is a
-// variable so tests can stub the platform lookup.
-var readKeychain = keychainCreds
-
-// readClaudeToken loads the token Claude Code wrote at login. On macOS the
-// credentials live in the login Keychain, on Linux in a JSON file; the keychain
-// is authoritative on darwin (freshly written by `claude setup-token`), so it
-// wins over any stale file.
-func readClaudeToken() (OAuthToken, bool) {
-	if data, ok := readKeychain(); ok {
-		if tok, ok := parseClaudeCreds(data); ok {
-			return tok, true
-		}
-	}
-	if data, err := os.ReadFile(claudeCredsPath()); err == nil {
-		if tok, ok := parseClaudeCreds(data); ok {
-			return tok, true
-		}
-	}
-	return OAuthToken{}, false
-}
-
-func parseClaudeCreds(data []byte) (OAuthToken, bool) {
-	var f claudeCredsFile
-	if err := json.Unmarshal(data, &f); err != nil {
+// LoadValid returns a usable token, refreshing it first if it has expired but
+// carries a refresh token. It returns false only when no token is stored or a
+// refresh is impossible/failed. On a successful refresh the rotated token is
+// persisted.
+func LoadValid(ctx context.Context) (OAuthToken, bool) {
+	tok, ok := Load()
+	if !ok {
 		return OAuthToken{}, false
 	}
-	return f.ClaudeAIOAuth, f.ClaudeAIOAuth.AccessToken != ""
+	if tok.Valid() {
+		return tok, true
+	}
+	if tok.RefreshToken == "" {
+		return OAuthToken{}, false
+	}
+	refreshed, err := Refresh(ctx, tok.RefreshToken)
+	if err != nil {
+		return OAuthToken{}, false
+	}
+	return refreshed, true
 }
 
 func readToken(path string) (OAuthToken, bool) {

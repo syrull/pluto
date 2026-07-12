@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -22,62 +23,16 @@ func writeJSON(t *testing.T, path string, v any) {
 	}
 }
 
-func stubKeychain(t *testing.T, data []byte, ok bool) {
+// stubPoster replaces the token endpoint transport for a test.
+func stubPoster(t *testing.T, fn func(ctx context.Context, body map[string]any) (OAuthToken, error)) {
 	t.Helper()
-	prev := readKeychain
-	readKeychain = func() ([]byte, bool) { return data, ok }
-	t.Cleanup(func() { readKeychain = prev })
-}
-
-func TestCaptureAfterLoginCopiesClaudeToken(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	stubKeychain(t, nil, false)
-
-	future := time.Now().Add(time.Hour).UnixMilli()
-	writeJSON(t, filepath.Join(home, ".claude", ".credentials.json"), claudeCredsFile{
-		ClaudeAIOAuth: OAuthToken{
-			AccessToken:  "access-abc",
-			RefreshToken: "refresh-xyz",
-			ExpiresAt:    future,
-			Scopes:       []string{"user:inference", "user:sessions:claude_code"},
-		},
-	})
-
-	got, err := CaptureAfterLogin()
-	if err != nil {
-		t.Fatalf("CaptureAfterLogin: %v", err)
-	}
-	if got.AccessToken != "access-abc" || got.RefreshToken != "refresh-xyz" {
-		t.Fatalf("captured token = %+v", got)
-	}
-
-	loaded, ok := Load()
-	if !ok {
-		t.Fatal("Load returned no token after capture")
-	}
-	if loaded.AccessToken != "access-abc" {
-		t.Fatalf("loaded token = %+v", loaded)
-	}
-	info, err := os.Stat(filepath.Join(home, ".pluto", "credentials.json"))
-	if err != nil {
-		t.Fatalf("store file missing: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("store perms = %o, want 600", perm)
-	}
-}
-
-func TestCaptureAfterLoginNoClaudeFile(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	stubKeychain(t, nil, false)
-	if _, err := CaptureAfterLogin(); err == nil {
-		t.Fatal("expected error when no claude credentials exist")
-	}
+	prev := tokenPoster
+	tokenPoster = fn
+	t.Cleanup(func() { tokenPoster = prev })
 }
 
 func TestTokenValid(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		name string
 		tok  OAuthToken
 		want bool
@@ -87,53 +42,37 @@ func TestTokenValid(t *testing.T) {
 		{"future", OAuthToken{AccessToken: "x", ExpiresAt: time.Now().Add(time.Hour).UnixMilli()}, true},
 		{"past", OAuthToken{AccessToken: "x", ExpiresAt: time.Now().Add(-time.Hour).UnixMilli()}, false},
 	}
-	for _, c := range cases {
-		if got := c.tok.Valid(); got != c.want {
-			t.Errorf("%s: Valid() = %v, want %v", c.name, got, c.want)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.tok.Valid(); got != tc.want {
+				t.Fatalf("Valid() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
-func TestLoadMissing(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	if _, ok := Load(); ok {
-		t.Fatal("Load should return false with no store")
-	}
-}
-
-func TestCaptureAfterLoginFromKeychain(t *testing.T) {
+func TestSaveLoadRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	blob, err := json.Marshal(claudeCredsFile{
-		ClaudeAIOAuth: OAuthToken{
-			AccessToken:  "kc-access",
-			RefreshToken: "kc-refresh",
-			ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
-			Scopes:       []string{"user:inference"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
+	want := OAuthToken{
+		AccessToken:  "access-abc",
+		RefreshToken: "refresh-xyz",
+		ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+		Scopes:       []string{"user:inference"},
 	}
-	blob = append(blob, '\n') // security -w emits a trailing newline
-	stubKeychain(t, blob, true)
-
-	got, err := CaptureAfterLogin()
-	if err != nil {
-		t.Fatalf("CaptureAfterLogin: %v", err)
-	}
-	if got.AccessToken != "kc-access" || got.RefreshToken != "kc-refresh" {
-		t.Fatalf("captured token = %+v", got)
+	if err := save(want); err != nil {
+		t.Fatalf("save: %v", err)
 	}
 
-	loaded, ok := Load()
+	got, ok := Load()
 	if !ok {
-		t.Fatal("Load returned no token after capture")
+		t.Fatal("Load returned no token after save")
 	}
-	if loaded.AccessToken != "kc-access" {
-		t.Fatalf("loaded token = %+v", loaded)
+	if got.AccessToken != want.AccessToken || got.RefreshToken != want.RefreshToken {
+		t.Fatalf("loaded token = %+v", got)
 	}
+
 	info, err := os.Stat(filepath.Join(home, ".pluto", "credentials.json"))
 	if err != nil {
 		t.Fatalf("store file missing: %v", err)
@@ -143,28 +82,131 @@ func TestCaptureAfterLoginFromKeychain(t *testing.T) {
 	}
 }
 
-func TestCaptureAfterLoginPrefersKeychain(t *testing.T) {
+func TestLoadMissing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if _, ok := Load(); ok {
+		t.Fatal("Load should report no token when store is absent")
+	}
+}
+
+func TestGeneratePKCE(t *testing.T) {
+	a, err := generatePKCE()
+	if err != nil {
+		t.Fatalf("generatePKCE: %v", err)
+	}
+	b, err := generatePKCE()
+	if err != nil {
+		t.Fatalf("generatePKCE: %v", err)
+	}
+	if a.verifier == "" || a.challenge == "" {
+		t.Fatal("empty verifier/challenge")
+	}
+	if a.verifier == a.challenge {
+		t.Fatal("challenge must differ from verifier (S256)")
+	}
+	if a.verifier == b.verifier {
+		t.Fatal("verifier must be random per call")
+	}
+}
+
+func TestParseAuthorizationInput(t *testing.T) {
+	tests := []struct {
+		name, in, code, state string
+	}{
+		{"bare code", "abc123", "abc123", ""},
+		{"code#state", "abc#st", "abc", "st"},
+		{"query", "code=abc&state=st", "abc", "st"},
+		{"redirect url", "http://localhost:53692/callback?code=abc&state=st", "abc", "st"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			code, state := parseAuthorizationInput(tc.in)
+			if code != tc.code || state != tc.state {
+				t.Fatalf("parse(%q) = (%q,%q), want (%q,%q)", tc.in, code, state, tc.code, tc.state)
+			}
+		})
+	}
+}
+
+func TestRefreshPersistsRotatedToken(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	future := time.Now().Add(time.Hour).UnixMilli()
-	writeJSON(t, filepath.Join(home, ".claude", ".credentials.json"), claudeCredsFile{
-		ClaudeAIOAuth: OAuthToken{AccessToken: "file-token", ExpiresAt: future},
+	var gotBody map[string]any
+	stubPoster(t, func(_ context.Context, body map[string]any) (OAuthToken, error) {
+		gotBody = body
+		return OAuthToken{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+		}, nil
 	})
 
-	blob, err := json.Marshal(claudeCredsFile{
-		ClaudeAIOAuth: OAuthToken{AccessToken: "keychain-token", ExpiresAt: future},
-	})
+	tok, err := Refresh(context.Background(), "old-refresh")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Refresh: %v", err)
 	}
-	stubKeychain(t, blob, true)
+	if gotBody["grant_type"] != "refresh_token" || gotBody["refresh_token"] != "old-refresh" || gotBody["client_id"] != oauthClientID {
+		t.Fatalf("refresh request body = %+v", gotBody)
+	}
+	if tok.AccessToken != "new-access" || tok.RefreshToken != "new-refresh" {
+		t.Fatalf("refreshed token = %+v", tok)
+	}
+	// Rotated token must be persisted.
+	stored, ok := Load()
+	if !ok || stored.AccessToken != "new-access" {
+		t.Fatalf("stored token after refresh = %+v (ok=%v)", stored, ok)
+	}
+}
 
-	got, err := CaptureAfterLogin()
-	if err != nil {
-		t.Fatalf("CaptureAfterLogin: %v", err)
+func TestLoadValidRefreshesExpired(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Seed an expired token that carries a refresh token.
+	writeJSON(t, storePath(), OAuthToken{
+		AccessToken:  "stale",
+		RefreshToken: "refresh-xyz",
+		ExpiresAt:    time.Now().Add(-time.Hour).UnixMilli(),
+	})
+
+	stubPoster(t, func(_ context.Context, _ map[string]any) (OAuthToken, error) {
+		return OAuthToken{
+			AccessToken:  "fresh",
+			RefreshToken: "refresh-2",
+			ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
+		}, nil
+	})
+
+	tok, ok := LoadValid(context.Background())
+	if !ok {
+		t.Fatal("LoadValid should refresh an expired token with a refresh token")
 	}
-	if got.AccessToken != "keychain-token" {
-		t.Fatalf("captured token = %+v, want keychain-token (keychain must win over stale file)", got)
+	if tok.AccessToken != "fresh" {
+		t.Fatalf("LoadValid token = %+v, want fresh", tok)
+	}
+}
+
+func TestLoadValidNoRefreshToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeJSON(t, storePath(), OAuthToken{
+		AccessToken: "stale",
+		ExpiresAt:   time.Now().Add(-time.Hour).UnixMilli(),
+	})
+	if _, ok := LoadValid(context.Background()); ok {
+		t.Fatal("LoadValid must fail on expired token with no refresh token")
+	}
+}
+
+func TestToTokenAppliesSkew(t *testing.T) {
+	tr := tokenResponse{AccessToken: "a", RefreshToken: "r", ExpiresIn: 3600}
+	tok := tr.toToken()
+	// expires_in 3600s minus 5min skew => ~3300s in the future.
+	deltaMs := tok.ExpiresAt - time.Now().UnixMilli()
+	minMs := int64((3300 - 5) * 1000)
+	maxMs := int64((3300 + 5) * 1000)
+	if deltaMs < minMs || deltaMs > maxMs {
+		t.Fatalf("expiry delta = %dms, want ~%dms (skew applied)", deltaMs, 3300*1000)
 	}
 }

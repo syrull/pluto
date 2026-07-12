@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -19,12 +18,22 @@ type eventMsg agent.Event
 
 type doneMsg struct{}
 
-type loginDoneMsg struct{ err error }
+type loginDoneMsg struct {
+	status string
+	err    error
+}
 
-// LoginHook wires the /login command.
+// LoginHook wires the /login command to the OAuth flow.
+//
+// Authorize builds the browser authorization URL and returns a handle. Wait
+// blocks (on a local callback server) until the redirect arrives, then
+// exchanges the code and re-authenticates the live provider, returning a status
+// line. Complete is the manual fallback for when the browser is on another
+// machine: the user pastes the redirect URL or code.
 type LoginHook struct {
-	Command func() *exec.Cmd
-	After   func(procErr error) (status string, err error)
+	Authorize func() (url string, flow any, err error)
+	Wait      func(flow any) (status string, err error)
+	Complete  func(flow any, pastedInput string) (status string, err error)
 }
 
 // entry is one committed transcript block, optionally tied to a retained tool
@@ -35,14 +44,15 @@ type entry struct {
 }
 
 type model struct {
-	agent  *agent.Agent
-	login  *LoginHook
-	lines  []entry        // committed transcript blocks
-	input  textarea.Model // current input buffer, multi-line with word wrap
-	busy   bool           // agent running; input disabled
-	events chan eventMsg  // agent → UI stream for the active Run
-	width  int
-	height int
+	agent     *agent.Agent
+	login     *LoginHook
+	loginFlow any            // pending OAuth flow awaiting manual code entry (paste fallback)
+	lines     []entry        // committed transcript blocks
+	input     textarea.Model // current input buffer, multi-line with word wrap
+	busy      bool           // agent running; input disabled
+	events    chan eventMsg  // agent → UI stream for the active Run
+	width     int
+	height    int
 
 	vp    viewport.Model
 	ready bool
