@@ -21,6 +21,9 @@ var _ tool.Tool = Bash{}
 func (Bash) Name() string { return "bash" }
 func (Bash) Description() string {
 	return "Run a shell command via `sh -c` and return its combined stdout and stderr. " +
+		"Always set `intent` (what the command accomplishes) and `why` (why it is needed now): " +
+		"commands may be reviewed by auto mode and refused if destructive or malicious, in which " +
+		"case adapt and try a safer approach. " +
 		"To read files use the read tool (not cat/head/tail/sed) and to search file " +
 		"contents use the find tool (not grep/rg/ag) — both bound their output so it " +
 		"can't overflow the context window. Simple cat/grep/rg commands issued here " +
@@ -30,12 +33,16 @@ func (Bash) Description() string {
 func (Bash) Schema() json.RawMessage {
 	return tool.ObjectSchema(map[string]tool.Property{
 		"command": {Type: "string", Description: "Shell command to execute."},
+		"intent":  {Type: "string", Description: "One short line: what running this command accomplishes."},
+		"why":     {Type: "string", Description: "One short line: why it is needed right now."},
 		"timeout": {Type: "integer", Description: "Timeout in seconds (default 60, max 600)."},
-	}, "command").MustJSON()
+	}, "command", "intent", "why").MustJSON()
 }
 
 type bashArgs struct {
 	Command string `json:"command"`
+	Intent  string `json:"intent"`
+	Why     string `json:"why"`
 	Timeout int    `json:"timeout"`
 }
 

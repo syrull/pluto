@@ -119,6 +119,14 @@ func (p *Provider) Model() string { return p.model }
 // ContextWindow reports the active model's total context window in tokens.
 func (p *Provider) ContextWindow() int { return contextWindowFor(p.model) }
 
+// SetWebSearchMaxUses sets the server-side web search cap; 0 disables the tool.
+func (p *Provider) SetWebSearchMaxUses(n int) {
+	if n < 0 {
+		n = 0
+	}
+	p.webSearchMaxUses = n
+}
+
 // SetModel switches the active model, re-clamping the effort level as needed.
 func (p *Provider) SetModel(model string) {
 	p.model = model

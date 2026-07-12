@@ -42,6 +42,12 @@ func wrapBody(prefix, body string, style lipgloss.Style, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// renderToolReview renders an auto-mode gate verdict as a yellow line shown
+// immediately before the reviewed tool-call box.
+func renderToolReview(width int, text string) string {
+	return wrapBody(styleReview.Render("• "), text, styleReview, width)
+}
+
 // renderToolCall renders a tool invocation with human-readable arguments
 // instead of raw JSON, e.g. "→ read(main.go:10-59)", wrapping long args.
 func renderToolCall(width int, toolName, argsJSON string) string {

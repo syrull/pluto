@@ -10,8 +10,10 @@ import (
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/auth"
 	"github.com/pluto/harness/internal/debug"
+	"github.com/pluto/harness/internal/judge"
 	"github.com/pluto/harness/internal/llm"
 	"github.com/pluto/harness/internal/llm/anthropic"
+	"github.com/pluto/harness/internal/policy"
 	"github.com/pluto/harness/internal/tool"
 	"github.com/pluto/harness/internal/tools"
 	"github.com/pluto/harness/internal/tui"
@@ -27,7 +29,9 @@ const systemPromptBase = "You are a minimal file-editing agent. " +
 	"can't do (running builds/tests, git, listing directories, etc.). " +
 	"Before making any decision or editing code, always explore the relevant code first and clearly " +
 	"understand what it does — read the surrounding context, trace callers and definitions, and " +
-	"confirm your understanding rather than acting on assumptions."
+	"confirm your understanding rather than acting on assumptions. " +
+	"When you run bash, always fill its intent/why arguments: commands are reviewed by auto mode and " +
+	"may be refused if destructive or malicious. If a command is refused, adapt with a safer approach."
 
 // contextFiles are project instruction files auto-injected into the system
 // prompt when present in the working directory, in this order.
@@ -78,7 +82,7 @@ func main() {
 
 	provider := selectProvider()
 
-	ag := agent.New(provider, reg, buildSystemPrompt(reg))
+	ag := agent.New(provider, reg, buildSystemPrompt(reg), agent.WithGate(buildGate()))
 	if _, err := tui.New(ag, buildLoginHook(ag)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "harness:", err)
 		os.Exit(1)
@@ -139,6 +143,32 @@ func defaultModel() string {
 		return m
 	}
 	return anthropic.DefaultModel
+}
+
+func judgeModel() string {
+	if m := os.Getenv("HARNESS_JUDGE_MODEL"); m != "" {
+		return m
+	}
+	return anthropic.DefaultJudgeModel
+}
+
+// buildGate constructs the auto-mode review gate. It returns nil (allow-all)
+// when HARNESS_AUTO=off. When the judge provider can't authenticate, auto mode
+// stays on in guard-only form so catastrophic commands are still blocked.
+func buildGate() agent.Gate {
+	cfg := policy.LoadConfig()
+	if cfg.Mode == policy.ModeOff {
+		return nil
+	}
+	model := judgeModel()
+	jp, err := anthropic.New(model)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "harness: judge unavailable, auto mode running guard-only:", err)
+		return policy.NewGate(cfg, nil)
+	}
+	jp.SetWebSearchMaxUses(0) // the judge never needs web search
+	cfg.JudgeName = model
+	return policy.NewGate(cfg, judge.NewLLM(jp))
 }
 
 // selectProvider returns the Anthropic provider if it can authenticate,

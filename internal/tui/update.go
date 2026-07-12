@@ -130,9 +130,35 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		th.SetThinkLevel(target)
 		return renderThinkStatus(th.ThinkLevel()), nil
 
+	case "/auto":
+		ctrl, ok := m.agent.Auto()
+		if !ok {
+			return styleErr.Render("✗ auto mode is not available in this build"), nil
+		}
+		if len(fields) == 1 {
+			return renderAutoStatus(ctrl), nil
+		}
+		switch fields[1] {
+		case "on":
+			ctrl.SetAutoEnabled(true)
+			return renderAutoStatus(ctrl), nil
+		case "off":
+			ctrl.SetAutoEnabled(false)
+			return styleHint.Render("✓ auto mode off — bash commands run without review"), nil
+		default:
+			return styleErr.Render("✗ usage: /auto [on|off]"), nil
+		}
+
 	default:
 		return styleErr.Render("✗ unknown command: " + fields[0]), nil
 	}
+}
+
+func renderAutoStatus(c agent.AutoController) string {
+	if !c.AutoEnabled() {
+		return styleHint.Render("auto mode: off")
+	}
+	return styleReview.Render(fmt.Sprintf("auto mode: on · judge %s", c.JudgeName()))
 }
 
 func thinkLevelList(levels []llm.ThinkLevel) string {
@@ -259,6 +285,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamText += ev.Text
 		case "thinking_delta":
 			m.streamThink += ev.Text
+		case "tool_review":
+			m.flushStream()
+			m.pushText(renderToolReview(m.width, ev.Text))
 		case "tool_call":
 			m.flushStream()
 			m.pendingTool = ev.Tool

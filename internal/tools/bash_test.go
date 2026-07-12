@@ -84,3 +84,29 @@ func TestBashInvalidJSONError(t *testing.T) {
 		t.Fatalf("Bash.Execute() error = nil, want non-nil; result = %q", result)
 	}
 }
+
+func TestBashSchemaRequiresIntent(t *testing.T) {
+	var s struct {
+		Properties map[string]any `json:"properties"`
+		Required   []string       `json:"required"`
+	}
+	if err := json.Unmarshal(Bash{}.Schema(), &s); err != nil {
+		t.Fatalf("Schema unmarshal: %v", err)
+	}
+	for _, k := range []string{"command", "intent", "why"} {
+		if _, ok := s.Properties[k]; !ok {
+			t.Fatalf("Schema missing property %q", k)
+		}
+		if !strings.Contains(strings.Join(s.Required, ","), k) {
+			t.Fatalf("Schema does not require %q", k)
+		}
+	}
+}
+
+func TestBashExecuteIgnoresMissingIntent(t *testing.T) {
+	// Intent/why are for the gate; Execute must still run without them.
+	result, err := Bash{}.Execute(context.Background(), json.RawMessage(`{"command":"echo ok"}`))
+	if err != nil || result != "ok" {
+		t.Fatalf("Execute without intent = %q, %v; want %q, nil", result, err, "ok")
+	}
+}

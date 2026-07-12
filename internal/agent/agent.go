@@ -14,14 +14,49 @@ const maxSteps = 1000
 
 // Event is an observable step emitted during Run, for UIs to render progress.
 type Event struct {
-	// Kind is one of: "text", "text_delta", "thinking_delta", "tool_call",
-	// "tool_result", "error". The *_delta kinds are incremental streaming
-	// chunks; "text" is a complete (non-streamed) reply.
+	// Kind is one of: "text", "text_delta", "thinking_delta", "tool_review",
+	// "tool_call", "tool_result", "error". The *_delta kinds are incremental
+	// streaming chunks; "text" is a complete (non-streamed) reply; "tool_review"
+	// is a gate verdict emitted just before a reviewed tool_call.
 	Kind string
 	// Text carries the payload appropriate to Kind.
 	Text string
-	// Tool names the tool for tool_call / tool_result events.
+	// Tool names the tool for tool_review / tool_call / tool_result events.
 	Tool string
+}
+
+// Gate reviews a proposed tool call before the agent executes it.
+type Gate interface {
+	Review(ctx context.Context, call llm.ToolCall) ReviewResult
+}
+
+// ReviewResult is a Gate's decision about a proposed tool call.
+type ReviewResult struct {
+	Allowed bool
+	// Source names the deciding layer: "fast-path", "guard", "guard-only",
+	// "judge", "judge-error", or "off".
+	Source string
+	Risk   string
+	Reason string
+}
+
+// AutoController is an optional capability a Gate exposes for runtime control.
+type AutoController interface {
+	AutoEnabled() bool
+	SetAutoEnabled(on bool)
+	JudgeName() string
+}
+
+// Option configures an Agent at construction.
+type Option func(*Agent)
+
+// WithGate installs a review gate consulted before each tool call. A nil gate is ignored.
+func WithGate(g Gate) Option {
+	return func(a *Agent) {
+		if g != nil {
+			a.gate = g
+		}
+	}
 }
 
 // Agent owns a provider, a tool registry, and the running transcript.
@@ -31,13 +66,17 @@ type Agent struct {
 	systemPrompt string
 	transcript   []llm.Message
 	lastUsage    llm.Usage // token accounting from the most recent turn
+	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
 }
 
 // New constructs an Agent seeded with an optional system prompt.
-func New(p llm.Provider, r *tool.Registry, systemPrompt string) *Agent {
+func New(p llm.Provider, r *tool.Registry, systemPrompt string, opts ...Option) *Agent {
 	a := &Agent{provider: p, registry: r, systemPrompt: systemPrompt}
 	if systemPrompt != "" {
 		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: systemPrompt})
+	}
+	for _, opt := range opts {
+		opt(a)
 	}
 	return a
 }
@@ -79,6 +118,12 @@ func (a *Agent) Thinker() (llm.Thinkable, bool) {
 
 // SetProvider swaps the active provider.
 func (a *Agent) SetProvider(p llm.Provider) { a.provider = p }
+
+// Auto exposes the gate's runtime auto-mode control, when it has one.
+func (a *Agent) Auto() (AutoController, bool) {
+	c, ok := a.gate.(AutoController)
+	return c, ok
+}
 
 func (a *Agent) specs() []llm.ToolSpec {
 	tools := a.registry.Tools()
@@ -137,6 +182,23 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 		// by call ID. Calls in one turn are independent (may run concurrently);
 		// here we run them sequentially for simplicity.
 		for _, call := range resp.ToolCalls {
+			if a.gate != nil {
+				rr := a.gate.Review(ctx, call)
+				if call.Name == "bash" && rr.Source != "off" {
+					emit(Event{Kind: "tool_review", Tool: call.Name, Text: reviewLine(rr)})
+				}
+				if !rr.Allowed {
+					debug.Logf("tool", "%s refused by gate (%s): %s", call.Name, rr.Source, rr.Reason)
+					emit(Event{Kind: "tool_call", Tool: call.Name, Text: string(call.Args)})
+					result := fmt.Sprintf("refused by auto mode (%s): %s", rr.Source, rr.Reason)
+					emit(Event{Kind: "error", Tool: call.Name, Text: result})
+					a.transcript = append(a.transcript, llm.Message{
+						Role: llm.RoleTool, ToolName: call.Name, ToolCallID: call.ID, Content: result,
+					})
+					continue
+				}
+			}
+
 			debug.Logf("tool", "invoke %s args=%s", call.Name, truncate(string(call.Args), 512))
 			emit(Event{Kind: "tool_call", Tool: call.Name, Text: string(call.Args)})
 
@@ -186,6 +248,25 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 	resp, err = a.provider.Generate(ctx, a.transcript, a.specs())
 	debug.Logf("llm", "Generate done: text=%d chars, tools=%d, err=%v", len(resp.Text), len(resp.ToolCalls), err)
 	return resp, false, err
+}
+
+// reviewLine renders a gate verdict as a concise one-line summary for the UI.
+func reviewLine(r ReviewResult) string {
+	verb := "allowed"
+	if !r.Allowed {
+		verb = "blocked"
+	}
+	s := "reviewed — " + verb
+	if r.Source != "" {
+		s += " (" + r.Source + ")"
+	}
+	if r.Risk != "" && r.Risk != "none" {
+		s += " · risk " + r.Risk
+	}
+	if !r.Allowed && r.Reason != "" {
+		s += ": " + r.Reason
+	}
+	return s
 }
 
 func truncate(s string, n int) string {

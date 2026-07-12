@@ -10,6 +10,9 @@ var Models = []string{
 // DefaultModel is the model New callers should use when none is specified.
 const DefaultModel = "claude-opus-4-8"
 
+// DefaultJudgeModel is the small, cheap model used for auto-mode command review.
+const DefaultJudgeModel = "claude-haiku-4-5"
+
 // defaultContextWindow is the fallback context window for uncatalogued models.
 const defaultContextWindow = 200_000
 

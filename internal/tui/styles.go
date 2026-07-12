@@ -26,6 +26,7 @@ var (
 	styleToolArgs   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	styleToolBody   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleToolResult = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	styleReview     = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow: auto-mode review line
 
 	styleShowBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
 	styleBashBox = lipgloss.NewStyle().
