@@ -10,6 +10,7 @@ var (
 	styleHint        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	stylePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
 	styleModelStatus = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	styleWorking     = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	styleThink       = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
 	styleThinkHdr    = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
 	styleThinkBox    = lipgloss.NewStyle().

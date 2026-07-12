@@ -248,10 +248,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.InsertRune('\n')
 			return m, nil
 		case "enter":
-			if m.busy || strings.TrimSpace(m.input.Value()) == "" {
+			in := strings.TrimSpace(m.input.Value())
+			if in == "" {
 				return m, nil
 			}
-			in := strings.TrimSpace(m.input.Value())
+			// The input stays live during generation: a plain message is queued
+			// to steer the running turn; slash commands wait until it's idle.
+			if m.busy {
+				if strings.HasPrefix(in, "/") {
+					m.pushText(styleErr.Render("✗ commands are unavailable while the agent is working"))
+					m.syncViewport()
+					return m, nil
+				}
+				m.pushText(m.renderUserLine(in))
+				m.input.Reset()
+				m.agent.Steer(in)
+				m.syncViewport()
+				return m, nil
+			}
 			m.pushText(m.renderUserLine(in))
 			m.input.Reset()
 			if strings.HasPrefix(in, "/") {
@@ -305,6 +319,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushStream()
 		m.busy = false
 		m.events = nil
+		// A message steered in as the run was ending wasn't folded into it;
+		// continue the conversation with it as the next turn.
+		if pending := m.agent.TakeSteering(); len(pending) > 0 {
+			m.busy = true
+			cmd := m.runAgent(strings.Join(pending, "\n\n"))
+			m.syncViewport()
+			return m, cmd
+		}
 		m.syncViewport()
 		return m, nil
 	case loginDoneMsg:

@@ -3,9 +3,9 @@ package tui
 import (
 	"bytes"
 	"context"
- 	"fmt"
- 	"strings"
- 	"testing"
+	"fmt"
+	"strings"
+	"testing"
 	"time"
 
 	"charm.land/bubbles/v2/viewport"
@@ -388,10 +388,67 @@ func TestViewFooterBusy(t *testing.T) {
 	m := &model{busy: true, input: in}
 	view := m.View().Content
 	if !strings.Contains(view, "working") {
-		t.Fatalf("busy footer should contain \"working\", got:\n%s", view)
+		t.Fatalf("busy status should contain \"working\", got:\n%s", view)
 	}
-	if strings.Contains(view, "hello") {
-		t.Fatalf("busy footer should not show input, got:\n%s", view)
+	if !strings.Contains(view, "hello") {
+		t.Fatalf("busy view should keep the input live for steering, got:\n%s", view)
+	}
+}
+
+func TestSteerWhileBusyQueuesMessage(t *testing.T) {
+	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "")
+	var m tea.Model = model{agent: ag, md: newRenderer(80), input: newInput(80), busy: true}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	for _, r := range "steer me" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := m.(model)
+
+	if !got.busy {
+		t.Fatalf("submitting while busy should stay busy, not start a fresh run")
+	}
+	if got.input.Value() != "" {
+		t.Fatalf("input should reset after a steering submit, got %q", got.input.Value())
+	}
+	pending := ag.TakeSteering()
+	if len(pending) != 1 || pending[0] != "steer me" {
+		t.Fatalf("steering queue = %v, want [\"steer me\"]", pending)
+	}
+}
+
+func TestCommandWhileBusyRejected(t *testing.T) {
+	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "")
+	var m tea.Model = model{agent: ag, md: newRenderer(80), input: newInput(80), busy: true}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	for _, r := range "/new" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if pending := ag.TakeSteering(); len(pending) != 0 {
+		t.Fatalf("commands must not be queued as steering, got %v", pending)
+	}
+}
+
+func TestDoneFoldsLeftoverSteering(t *testing.T) {
+	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "")
+	ag.Steer("continue please")
+	m := model{agent: ag, md: newRenderer(80), input: newInput(80), busy: true}
+
+	updated, cmd := m.Update(doneMsg{})
+	got := updated.(model)
+
+	if !got.busy {
+		t.Fatalf("busy should stay true to run the steered follow-up")
+	}
+	if cmd == nil {
+		t.Fatalf("expected a command to run the steered follow-up")
+	}
+	if leftover := ag.TakeSteering(); len(leftover) != 0 {
+		t.Fatalf("steering queue should be drained on done, got %v", leftover)
 	}
 }
 

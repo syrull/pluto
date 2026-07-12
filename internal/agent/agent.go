@@ -4,6 +4,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/llm"
@@ -89,6 +90,9 @@ type Agent struct {
 	lastUsage    llm.Usage // token accounting from the most recent turn
 	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
 	contextLimit int       // token budget for the re-sent transcript; 0 ⇒ derive from window
+
+	steerMu sync.Mutex // guards steer
+	steer   []string   // user messages queued to fold into a running turn
 }
 
 // New constructs an Agent seeded with an optional system prompt.
@@ -107,9 +111,51 @@ func New(p llm.Provider, r *tool.Registry, systemPrompt string, opts ...Option) 
 func (a *Agent) Reset() {
 	a.transcript = nil
 	a.lastUsage = llm.Usage{}
+	a.TakeSteering()
 	if a.systemPrompt != "" {
 		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemPrompt})
 	}
+}
+
+// Steer queues a user message to fold into a running turn at the next step
+// boundary, letting the user redirect the agent mid-task. It is safe to call
+// concurrently with Run; a message sent while Run is idle is picked up by the
+// next Run. The UI drains any leftover with TakeSteering once a Run ends.
+func (a *Agent) Steer(input string) {
+	a.steerMu.Lock()
+	a.steer = append(a.steer, input)
+	a.steerMu.Unlock()
+}
+
+// TakeSteering removes and returns the queued steering messages, if any.
+func (a *Agent) TakeSteering() []string {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	q := a.steer
+	a.steer = nil
+	return q
+}
+
+// hasSteering reports whether any steering messages are queued.
+func (a *Agent) hasSteering() bool {
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	return len(a.steer) > 0
+}
+
+// injectSteering appends any queued steering messages as user turns and re-trims
+// the transcript. It reports whether anything was injected.
+func (a *Agent) injectSteering() bool {
+	msgs := a.TakeSteering()
+	for _, msg := range msgs {
+		debug.Logf("agent", "steer input=%q", truncate(msg, 256))
+		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: msg})
+	}
+	if len(msgs) > 0 {
+		a.trimTranscript()
+		return true
+	}
+	return false
 }
 
 // ProviderName returns the backend name, for display.
@@ -167,6 +213,9 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		// Fold in any user messages queued since the previous step so the model
+		// sees them before generating its next turn.
+		a.injectSteering()
 
 		resp, streamed, err := a.generate(ctx, emit)
 		if err != nil {
@@ -186,6 +235,11 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 			})
 			if !streamed {
 				emit(Event{Kind: "text", Text: resp.Text})
+			}
+			// A message steered in while the reply was finishing keeps the
+			// conversation going instead of ending the turn.
+			if a.hasSteering() {
+				continue
 			}
 			return resp.Text, nil
 		}

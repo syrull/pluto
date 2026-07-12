@@ -46,6 +46,41 @@ func TestBuildMessagesCoalescesToolResults(t *testing.T) {
 	}
 }
 
+func TestBuildMessagesFoldsSteeringAfterToolResult(t *testing.T) {
+	transcript := []llm.Message{
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleModel, ToolCalls: []llm.ToolCall{{ID: "t1", Name: "read", Args: json.RawMessage(`{}`)}}},
+		{Role: llm.RoleTool, ToolCallID: "t1", ToolName: "read", Content: "R"},
+		{Role: llm.RoleUser, Content: "actually stop"}, // steered in after the tool result
+	}
+
+	msgs := buildMessages(transcript)
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want 3 (no dangling second user turn)", len(msgs))
+	}
+	if msgs[0].Role != "user" || msgs[1].Role != "assistant" || msgs[2].Role != "user" {
+		t.Fatalf("roles = %q/%q/%q", msgs[0].Role, msgs[1].Role, msgs[2].Role)
+	}
+	// The steering text rides in the same user turn as the tool result, after it.
+	c := msgs[2].Content
+	if len(c) != 2 || c[0].Type != "tool_result" || c[1].Type != "text" || c[1].Text != "actually stop" {
+		t.Fatalf("tool-result turn should carry the steering text after the result: %+v", c)
+	}
+}
+
+func TestBuildMessagesMergesConsecutiveUsers(t *testing.T) {
+	msgs := buildMessages([]llm.Message{
+		{Role: llm.RoleUser, Content: "one"},
+		{Role: llm.RoleUser, Content: "two"},
+	})
+	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
+		t.Fatalf("consecutive user turns should merge into one message, got %+v", msgs)
+	}
+	if msgs[0].Content[0].Text != "one" || msgs[0].Content[1].Text != "two" {
+		t.Fatalf("merged blocks = %+v, want [one two]", msgs[0].Content)
+	}
+}
+
 func TestCacheBreakpoints(t *testing.T) {
 	p := &Provider{model: "claude-opus-4-8", maxTok: defaultMaxTok, thinkLvl: llm.ThinkNone}
 	transcript := []llm.Message{

@@ -459,10 +459,16 @@ func buildMessages(transcript []llm.Message) []wireMessage {
 		case llm.RoleSystem:
 			// handled in buildSystem
 		case llm.RoleUser:
-			out = append(out, wireMessage{
-				Role:    "user",
-				Content: []wireBlock{{Type: "text", Text: m.Content}},
-			})
+			// Coalesce into a preceding user turn (a tool_result carrier, or an
+			// earlier user turn) so a steering message folded in after tool
+			// results doesn't produce two consecutive user turns, which the API
+			// rejects. Text after tool_result blocks is valid.
+			block := wireBlock{Type: "text", Text: m.Content}
+			if n := len(out); n > 0 && out[n-1].Role == "user" {
+				out[n-1].Content = append(out[n-1].Content, block)
+			} else {
+				out = append(out, wireMessage{Role: "user", Content: []wireBlock{block}})
+			}
 		case llm.RoleModel:
 			blocks := make([]wireBlock, 0, 2+len(m.ToolCalls))
 			// Thinking block MUST lead the assistant turn when present (the API

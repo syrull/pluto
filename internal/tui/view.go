@@ -189,6 +189,11 @@ func (m model) modelStatus() string {
 			status += fmt.Sprintf(" · context: %d%% / %s", pct, formatTokens(window))
 		}
 	}
+	if m.busy {
+		// The input stays live for steering, so the working state is surfaced
+		// here rather than by replacing the input box.
+		return styleWorking.Render("● working…") + styleModelStatus.Render(" · "+status)
+	}
 	return styleModelStatus.Render(status)
 }
 
@@ -209,10 +214,9 @@ func trimZero(v float64) string {
 	return strings.TrimSuffix(fmt.Sprintf("%.1f", v), ".0")
 }
 
+// footer renders the input box, kept live even while the agent is working so the
+// user can steer the running turn.
 func (m model) footer() string {
-	if m.busy {
-		return styleHint.Render("working…") + strings.Repeat("\n", inputHeight-1)
-	}
 	return m.input.View()
 }
 
