@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pluto/harness/internal/llm"
@@ -23,6 +26,13 @@ const (
 	// requestTimeout bounds a full non-streaming request (connect + read body).
 	// Streaming uses a per-frame idle timeout instead (see streamIdleTimeout).
 	requestTimeout = 120 * time.Second
+	// webSearchToolVersion is the stable basic web-search server tool.
+	webSearchToolVersion = "web_search_20250305"
+	// webSearchToolName is the fixed name the API requires for the tool.
+	webSearchToolName = "web_search"
+	// defaultWebSearchMaxUses bounds searches per request when web search is
+	// enabled without an explicit cap.
+	defaultWebSearchMaxUses = 5
 )
 
 // legacyBudgets maps effort levels to budget_tokens for regimeLegacy models; API requires budget_tokens < max_tokens.
@@ -49,6 +59,9 @@ type Provider struct {
 	baseURL  string
 	maxTok   int
 	thinkLvl llm.ThinkLevel // current effort level; ThinkNone disables thinking
+	// webSearchMaxUses, when > 0, enables Anthropic's server-side web_search
+	// tool and caps searches per request. Zero disables it.
+	webSearchMaxUses int
 }
 
 var (
@@ -71,11 +84,30 @@ func New(model string) (*Provider, error) {
 		// budget regardless of activity. Bounds are applied per call instead
 		// (requestTimeout for Generate, streamIdleTimeout watchdog for streams).
 		// DefaultTransport still bounds dial/TLS handshake.
-		http:     &http.Client{},
-		baseURL:  defaultBaseURL,
-		maxTok:   defaultMaxTok,
-		thinkLvl: defaultThinkLevel,
+		http:             &http.Client{},
+		baseURL:          defaultBaseURL,
+		maxTok:           defaultMaxTok,
+		thinkLvl:         defaultThinkLevel,
+		webSearchMaxUses: resolveWebSearchMaxUses(),
 	}, nil
+}
+
+// resolveWebSearchMaxUses reads ANTHROPIC_WEB_SEARCH to configure the
+// server-side web search tool, which is ON by default for Anthropic. Unset (or
+// "1"/"true") enables it with the default cap; a positive integer sets an
+// explicit cap; "0"/"false"/"off"/"no" opts out.
+func resolveWebSearchMaxUses() int {
+	v := strings.TrimSpace(os.Getenv("ANTHROPIC_WEB_SEARCH"))
+	switch strings.ToLower(v) {
+	case "0", "false", "off", "no":
+		return 0
+	case "", "1", "true", "on", "yes":
+		return defaultWebSearchMaxUses
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return n
+	}
+	return defaultWebSearchMaxUses
 }
 
 // Name implements llm.Provider.
@@ -195,19 +227,34 @@ type wireBlock struct {
 	Input json.RawMessage `json:"input,omitempty"`
 
 	// tool_result
-	ToolUseID string `json:"tool_use_id,omitempty"`
-	Content   string `json:"content,omitempty"`
-	IsError   bool   `json:"is_error,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
 
 	// thinking
 	Thinking  string `json:"thinking,omitempty"`
 	Signature string `json:"signature,omitempty"`
+
+	// text citations (server-side web search); inbound only
+	Citations []wireCitation `json:"citations,omitempty"`
 }
 
+// wireCitation is a web_search_result_location attached to a text block.
+type wireCitation struct {
+	Type  string `json:"type"`
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+// wireTool is a client tool (Name/Description/InputSchema) or a server tool
+// (Type/Name plus tool-specific fields like MaxUses). omitempty keeps each
+// variant's JSON minimal so the API sees only the fields it expects.
 type wireTool struct {
+	Type        string          `json:"type,omitempty"`
 	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	MaxUses     int             `json:"max_uses,omitempty"`
 }
 
 type wireResponse struct {
@@ -242,6 +289,13 @@ func (p *Provider) buildRequest(transcript []llm.Message, tools []llm.ToolSpec, 
 		Messages:  buildMessages(transcript),
 		Tools:     buildTools(tools),
 		Stream:    stream,
+	}
+	if p.webSearchMaxUses > 0 {
+		req.Tools = append(req.Tools, wireTool{
+			Type:    webSearchToolVersion,
+			Name:    webSearchToolName,
+			MaxUses: p.webSearchMaxUses,
+		})
 	}
 	switch regimeFor(p.model) {
 	case regimeAdaptive:
@@ -380,7 +434,7 @@ func buildMessages(transcript []llm.Message) []wireMessage {
 			}
 			out = append(out, wireMessage{Role: "assistant", Content: blocks})
 		case llm.RoleTool:
-			block := wireBlock{Type: "tool_result", ToolUseID: m.ToolCallID, Content: m.Content}
+			block := wireBlock{Type: "tool_result", ToolUseID: m.ToolCallID, Content: jsonString(m.Content)}
 			// Coalesce into the preceding user message if it is already a
 			// tool_result carrier; otherwise open a new user message.
 			if n := len(out); n > 0 && out[n-1].Role == "user" && isToolResultCarrier(out[n-1]) {
@@ -421,10 +475,12 @@ func buildTools(tools []llm.ToolSpec) []wireTool {
 // mapResponse turns the assistant content blocks into an llm.Response.
 func mapResponse(wire wireResponse) llm.Response {
 	var out llm.Response
+	var sources sourceSet
 	for _, b := range wire.Content {
 		switch b.Type {
 		case "text":
 			out.Text += b.Text
+			sources.addAll(b.Citations)
 		case "thinking":
 			out.Thinking += b.Thinking
 			if b.Signature != "" {
@@ -434,8 +490,11 @@ func mapResponse(wire wireResponse) llm.Response {
 			out.ToolCalls = append(out.ToolCalls, llm.ToolCall{
 				ID: b.ID, Name: b.Name, Args: json.RawMessage(b.Input),
 			})
+			// server_tool_use and web_search_tool_result are executed by the
+			// API within this turn; they carry no client-actionable call.
 		}
 	}
+	out.Text += sources.footer()
 	if wire.Usage != nil {
 		out.Usage = llm.Usage{InputTokens: wire.Usage.contextTokens(), OutputTokens: wire.Usage.OutputTokens}
 	}
@@ -447,6 +506,58 @@ func rawOrNull(r json.RawMessage) json.RawMessage {
 		return json.RawMessage("null")
 	}
 	return r
+}
+
+// jsonString encodes s as a JSON string value for a tool_result content field.
+func jsonString(s string) json.RawMessage {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return b
+}
+
+// sourceSet collects unique web-search citation sources in first-seen order.
+type sourceSet struct {
+	seen  map[string]struct{}
+	order []wireCitation
+}
+
+func (s *sourceSet) addAll(cites []wireCitation) {
+	for _, c := range cites {
+		if c.URL == "" {
+			continue
+		}
+		if s.seen == nil {
+			s.seen = make(map[string]struct{})
+		}
+		if _, ok := s.seen[c.URL]; ok {
+			continue
+		}
+		s.seen[c.URL] = struct{}{}
+		s.order = append(s.order, c)
+	}
+}
+
+// footer renders a trailing sources block, or empty when no citations were seen.
+func (s *sourceSet) footer() string {
+	if len(s.order) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nSources:\n")
+	for _, c := range s.order {
+		title := c.Title
+		if title == "" {
+			title = c.URL
+		}
+		b.WriteString("- ")
+		b.WriteString(title)
+		b.WriteString(" (")
+		b.WriteString(c.URL)
+		b.WriteString(")\n")
+	}
+	return b.String()
 }
 
 func rawOrObject(r json.RawMessage) json.RawMessage {

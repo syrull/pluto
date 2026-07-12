@@ -44,12 +44,13 @@ type sseBlock struct {
 }
 
 type sseDelta struct {
-	Type        string `json:"type"` // text_delta | thinking_delta | input_json_delta | signature_delta
-	Text        string `json:"text"`
-	Thinking    string `json:"thinking"`
-	PartialJSON string `json:"partial_json"`
-	StopReason  string `json:"stop_reason"`
-	Signature   string `json:"signature"`
+	Type        string        `json:"type"` // text_delta | thinking_delta | input_json_delta | signature_delta | citations_delta
+	Text        string        `json:"text"`
+	Thinking    string        `json:"thinking"`
+	PartialJSON string        `json:"partial_json"`
+	StopReason  string        `json:"stop_reason"`
+	Signature   string        `json:"signature"`
+	Citation    *wireCitation `json:"citation"`
 }
 
 type sseError struct {
@@ -65,6 +66,7 @@ type blockAccumulator struct {
 	sig      string          // thinking signature
 	text     strings.Builder // text/thinking content
 	json     strings.Builder // tool_use input_json fragments
+	cites    []wireCitation  // web-search citations on a text block
 }
 
 // GenerateStream implements llm.StreamingProvider.
@@ -107,6 +109,7 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 
 	blocks := map[int]*blockAccumulator{}
 	var out llm.Response
+	var sources sourceSet
 
 	for scanner.Scan() {
 		// Any frame — delta, ping, or keep-alive — proves the stream is live.
@@ -159,6 +162,10 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 				acc.json.WriteString(ev.Delta.PartialJSON)
 			case "signature_delta":
 				acc.sig += ev.Delta.Signature
+			case "citations_delta":
+				if ev.Delta.Citation != nil {
+					acc.cites = append(acc.cites, *ev.Delta.Citation)
+				}
 			}
 
 		case "content_block_stop":
@@ -169,6 +176,7 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 			switch acc.kind {
 			case "text":
 				out.Text += acc.text.String()
+				sources.addAll(acc.cites)
 			case "thinking":
 				out.Thinking += acc.text.String()
 				if acc.sig != "" {
@@ -206,6 +214,10 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 	}
 	if err != nil {
 		return out, fmt.Errorf("anthropic: read stream: %w", err)
+	}
+	if footer := sources.footer(); footer != "" {
+		out.Text += footer
+		onDelta(llm.StreamDelta{Kind: llm.DeltaText, Text: footer})
 	}
 	return out, nil
 }
