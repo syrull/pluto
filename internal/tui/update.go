@@ -318,7 +318,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncViewport()
 		return m, nil
 	}
-	return m, nil
+	// Bracketed paste (tea.PasteMsg) and the textarea's async ctrl+v clipboard
+	// read arrive as unhandled messages; route them into the input buffer.
+	return m.forwardToInput(msg)
+}
+
+// forwardToInput routes a message into the input textarea unless a modal or
+// picker is capturing keys.
+func (m model) forwardToInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.modal != nil || m.picker != nil {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
 }
 
 // handleMouse scrolls with the wheel and, on a left click over a truncated tool

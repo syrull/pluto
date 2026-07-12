@@ -307,6 +307,35 @@ func TestPrintableKeyRegression(t *testing.T) {
 	}
 }
 
+func TestPasteInsertsIntoInput(t *testing.T) {
+	var m tea.Model = model{md: newRenderer(80)}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m, _ = m.Update(tea.PasteMsg{Content: "pasted text"})
+	got := m.(model)
+
+	if got.input.Value() != "xpasted text" {
+		t.Fatalf("input = %q, want %q", got.input.Value(), "xpasted text")
+	}
+}
+
+func TestPasteIgnoredWhilePickerOpen(t *testing.T) {
+	var m tea.Model = model{md: newRenderer(80)}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+
+	got := m.(model)
+	got.picker = newThinkPicker([]llm.ThinkLevel{llm.ThinkNone}, llm.ThinkNone)
+	m = got
+
+	m, _ = m.Update(tea.PasteMsg{Content: "nope"})
+	got = m.(model)
+
+	if got.input.Value() != "" {
+		t.Fatalf("input = %q, want empty (paste should be ignored while picker open)", got.input.Value())
+	}
+}
+
 func TestNoYankWhenScrolledUp(t *testing.T) {
 	var m tea.Model = model{md: newRenderer(80)}
 
