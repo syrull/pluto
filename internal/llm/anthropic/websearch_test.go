@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pluto/harness/internal/llm"
+	"github.com/syrull/pluto/internal/llm"
 )
 
 func TestResolveWebSearchMaxUses(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pluto/harness/internal/diff"
-	"github.com/pluto/harness/internal/tool"
+	"github.com/syrull/pluto/internal/diff"
+	"github.com/syrull/pluto/internal/tool"
 )
 
 // Write is a tool that writes content to a file, creating parent directories.

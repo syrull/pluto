@@ -12,10 +12,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/pluto/harness/internal/agent"
-	"github.com/pluto/harness/internal/llm"
-	"github.com/pluto/harness/internal/llm/anthropic"
-	"github.com/pluto/harness/internal/tool"
+	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/llm/anthropic"
+	"github.com/syrull/pluto/internal/tool"
 )
 
 func TestFlushStreamCommitsThinkingAndText(t *testing.T) {

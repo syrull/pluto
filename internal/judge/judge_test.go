@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/pluto/harness/internal/llm"
+	"github.com/syrull/pluto/internal/llm"
 )
 
 type fakeProvider struct {

@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/pluto/harness/internal/auth"
+	"github.com/syrull/pluto/internal/auth"
 )
 
 func main() {

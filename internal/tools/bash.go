@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pluto/harness/internal/tool"
+	"github.com/syrull/pluto/internal/tool"
 )
 
 // Bash runs a shell command via sh -c and returns combined stdout and stderr.

@@ -7,16 +7,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pluto/harness/internal/agent"
-	"github.com/pluto/harness/internal/auth"
-	"github.com/pluto/harness/internal/debug"
-	"github.com/pluto/harness/internal/judge"
-	"github.com/pluto/harness/internal/llm"
-	"github.com/pluto/harness/internal/llm/anthropic"
-	"github.com/pluto/harness/internal/policy"
-	"github.com/pluto/harness/internal/tool"
-	"github.com/pluto/harness/internal/tools"
-	"github.com/pluto/harness/internal/tui"
+	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/auth"
+	"github.com/syrull/pluto/internal/debug"
+	"github.com/syrull/pluto/internal/judge"
+	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/llm/anthropic"
+	"github.com/syrull/pluto/internal/policy"
+	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/tools"
+	"github.com/syrull/pluto/internal/tui"
 )
 
 // systemPromptBase is the static guidance prepended to the dynamically

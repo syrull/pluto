@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for AI agents working in this repo (`github.com/pluto/harness`).
+Guidance for AI agents working in this repo (`github.com/syrull/pluto`).
 
 ## Comments
 

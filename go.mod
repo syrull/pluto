@@ -1,4 +1,4 @@
-module github.com/pluto/harness
+module github.com/syrull/pluto
 
 go 1.26.3
 

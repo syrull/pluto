@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pluto/harness/internal/judge"
-	"github.com/pluto/harness/internal/llm"
+	"github.com/syrull/pluto/internal/judge"
+	"github.com/syrull/pluto/internal/llm"
 )
 
 func bashCall(cmd string) llm.ToolCall {

@@ -9,9 +9,9 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pluto/harness/internal/agent"
-	"github.com/pluto/harness/internal/llm"
-	"github.com/pluto/harness/internal/tui/widgets"
+	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
 func listen(ch chan eventMsg) tea.Cmd {

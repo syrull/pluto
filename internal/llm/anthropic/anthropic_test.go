@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pluto/harness/internal/llm"
+	"github.com/syrull/pluto/internal/llm"
 )
 
 func TestBuildMessagesCoalescesToolResults(t *testing.T) {

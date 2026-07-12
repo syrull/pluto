@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pluto/harness/internal/agent"
-	"github.com/pluto/harness/internal/guard"
-	"github.com/pluto/harness/internal/judge"
-	"github.com/pluto/harness/internal/llm"
+	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/guard"
+	"github.com/syrull/pluto/internal/judge"
+	"github.com/syrull/pluto/internal/llm"
 )
 
 // Mode selects how the gate reviews commands.

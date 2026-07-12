@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/glamour/styles"
 	"golang.org/x/term"
 
-	"github.com/pluto/harness/internal/agent"
-	"github.com/pluto/harness/internal/diff"
-	"github.com/pluto/harness/internal/tui/widgets"
+	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/diff"
+	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
 // newRenderer uses explicit style rather than glamour.WithAutoStyle() to avoid OSC 11 background-probe leaking onto stdin.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pluto/harness/internal/llm"
+	"github.com/syrull/pluto/internal/llm"
 )
 
 const sseFixture = `event: message_start

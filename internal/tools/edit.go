@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pluto/harness/internal/tool"
+	"github.com/syrull/pluto/internal/tool"
 )
 
 // Edit replaces an exact substring in a file; the substring must occur exactly once.

@@ -3,9 +3,9 @@ package agent
 import (
 	"testing"
 
-	"github.com/pluto/harness/internal/llm"
-	"github.com/pluto/harness/internal/llm/anthropic"
-	"github.com/pluto/harness/internal/tool"
+	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/llm/anthropic"
+	"github.com/syrull/pluto/internal/tool"
 )
 
 func TestSwitcherExposesAnthropicModelPicking(t *testing.T) {

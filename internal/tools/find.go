@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pluto/harness/internal/tool"
+	"github.com/syrull/pluto/internal/tool"
 )
 
 // Find searches file contents with ripgrep and returns bounded path:line:text matches.

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/pluto/harness/internal/auth"
+	"github.com/syrull/pluto/internal/auth"
 )
 
 // authMode distinguishes the two credential styles.

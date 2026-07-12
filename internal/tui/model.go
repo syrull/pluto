@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/glamour"
 	"charm.land/lipgloss/v2"
 
-	"github.com/pluto/harness/internal/agent"
-	"github.com/pluto/harness/internal/tui/widgets"
+	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
 type eventMsg agent.Event

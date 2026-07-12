@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pluto/harness/internal/tool"
-	"github.com/pluto/harness/internal/tools"
+	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/tools"
 )
 
 // newTestRegistry creates a fresh registry with Read and Find tools for testing.

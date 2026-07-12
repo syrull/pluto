@@ -8,7 +8,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/pluto/harness/internal/tui/widgets"
+	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
 // maxResultPreviewLines caps how many lines of a multi-line tool result are

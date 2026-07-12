@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pluto/harness/internal/llm"
+	"github.com/syrull/pluto/internal/llm"
 )
 
 const (

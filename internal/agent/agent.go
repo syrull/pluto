@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pluto/harness/internal/debug"
-	"github.com/pluto/harness/internal/llm"
-	"github.com/pluto/harness/internal/tool"
+	"github.com/syrull/pluto/internal/debug"
+	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/tool"
 )
 
 const maxSteps = 1000

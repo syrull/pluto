@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pluto/harness/internal/llm"
-	"github.com/pluto/harness/internal/tool"
-	"github.com/pluto/harness/internal/tools"
+	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/tools"
 )
 
 func newTestAgent(t *testing.T) *Agent {
