@@ -1,6 +1,6 @@
-// Package auth manages the harness's Anthropic OAuth credentials.
+// Package auth manages pluto's Anthropic OAuth credentials.
 //
-// Authentication mirrors pi's Claude Pro/Max flow: the harness runs its own
+// Authentication mirrors pi's Claude Pro/Max flow: pluto runs its own
 // PKCE authorization-code flow (see oauth.go), stores the minted access/refresh
 // pair, and silently refreshes the access token via the refresh token when it
 // expires — so the user does not have to re-login on every expiry.
@@ -45,7 +45,7 @@ func (t OAuthToken) Valid() bool {
 	return time.Now().UnixMilli() < t.ExpiresAt
 }
 
-// Load returns the stored harness token, or false if none is stored.
+// Load returns the stored pluto token, or false if none is stored.
 func Load() (OAuthToken, bool) {
 	return readToken(storePath())
 }

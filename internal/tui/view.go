@@ -32,7 +32,7 @@ func newRenderer(width int) *glamour.TermRenderer {
 
 // glamourStyle picks the markdown theme without probing the terminal for its background color.
 func glamourStyle() string {
-	if s := os.Getenv("HARNESS_MD_STYLE"); s != "" {
+	if s := os.Getenv("PLUTO_MD_STYLE"); s != "" {
 		return s
 	}
 	if !term.IsTerminal(int(os.Stdout.Fd())) {

@@ -1,4 +1,4 @@
-// Package debug provides a lightweight, file-backed debug logger for the harness.
+// Package debug provides a lightweight, file-backed debug logger for pluto.
 package debug
 
 import (
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const defaultFile = "harness-debug.log"
+const defaultFile = "pluto-debug.log"
 
 var (
 	mu      sync.Mutex
@@ -27,11 +27,11 @@ func Init() (path string, err error) {
 	if logger != nil {
 		return "", nil // already initialized
 	}
-	if !truthy(os.Getenv("HARNESS_DEBUG")) {
+	if !truthy(os.Getenv("PLUTO_DEBUG")) {
 		return "", nil
 	}
 
-	path = os.Getenv("HARNESS_DEBUG_FILE")
+	path = os.Getenv("PLUTO_DEBUG_FILE")
 	if path == "" {
 		path = defaultFile
 	}
@@ -45,7 +45,7 @@ func Init() (path string, err error) {
 	// Microsecond timestamps; no std flags on the message body so component
 	// tags line up.
 	logger = log.New(f, "", 0)
-	writeLine("=== harness debug log opened %s ===", time.Now().Format(time.RFC3339))
+	writeLine("=== pluto debug log opened %s ===", time.Now().Format(time.RFC3339))
 	return path, nil
 }
 
@@ -83,7 +83,7 @@ func Close() error {
 	if logger == nil {
 		return nil
 	}
-	writeLine("=== harness debug log closed %s ===", time.Now().Format(time.RFC3339))
+	writeLine("=== pluto debug log closed %s ===", time.Now().Format(time.RFC3339))
 	err := closer.Close()
 	logger, closer, enabled = nil, nil, false
 	return err

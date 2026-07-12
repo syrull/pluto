@@ -1,4 +1,4 @@
-// Command harness is a minimal, modular AI-harness skeleton with a Bubbletea TUI.
+// Command pluto is a minimal, modular AI-harness skeleton with a Bubbletea TUI.
 package main
 
 import (
@@ -68,9 +68,9 @@ func buildSystemPrompt(reg *tool.Registry) string {
 
 func main() {
 	if path, err := debug.Init(); err != nil {
-		fmt.Fprintln(os.Stderr, "harness: debug logging disabled:", err)
+		fmt.Fprintln(os.Stderr, "pluto: debug logging disabled:", err)
 	} else if path != "" {
-		fmt.Fprintln(os.Stderr, "harness: debug logging to", path)
+		fmt.Fprintln(os.Stderr, "pluto: debug logging to", path)
 	}
 	defer debug.Close()
 
@@ -88,7 +88,7 @@ func main() {
 		agent.WithContextLimit(contextLimit()),
 	)
 	if _, err := tui.New(ag, buildLoginHook(ag)).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "harness:", err)
+		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
 	}
 }
@@ -143,23 +143,23 @@ func buildLoginHook(ag *agent.Agent) *tui.LoginHook {
 }
 
 func defaultModel() string {
-	if m := os.Getenv("HARNESS_MODEL"); m != "" {
+	if m := os.Getenv("PLUTO_MODEL"); m != "" {
 		return m
 	}
 	return anthropic.DefaultModel
 }
 
 func judgeModel() string {
-	if m := os.Getenv("HARNESS_JUDGE_MODEL"); m != "" {
+	if m := os.Getenv("PLUTO_JUDGE_MODEL"); m != "" {
 		return m
 	}
 	return anthropic.DefaultJudgeModel
 }
 
-// contextLimit reads HARNESS_CONTEXT_LIMIT (approx tokens of transcript to re-send
+// contextLimit reads PLUTO_CONTEXT_LIMIT (approx tokens of transcript to re-send
 // per turn). 0 (unset/invalid) lets the agent derive a budget from the model window.
 func contextLimit() int {
-	if v := strings.TrimSpace(os.Getenv("HARNESS_CONTEXT_LIMIT")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("PLUTO_CONTEXT_LIMIT")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
@@ -168,7 +168,7 @@ func contextLimit() int {
 }
 
 // buildGate constructs the auto-mode review gate. It returns nil (allow-all)
-// when HARNESS_AUTO=off. When the judge provider can't authenticate, auto mode
+// when PLUTO_AUTO=off. When the judge provider can't authenticate, auto mode
 // stays on in guard-only form so catastrophic commands are still blocked.
 func buildGate() agent.Gate {
 	cfg := policy.LoadConfig()
@@ -178,21 +178,21 @@ func buildGate() agent.Gate {
 	model := judgeModel()
 	jp, err := anthropic.New(model)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "harness: judge unavailable, auto mode running guard-only:", err)
-		return policy.NewGate(cfg, nil)
+		fmt.Fprintln(os.Stderr, "pluto: judge unavailable, auto mode running guard-only:", err)
+		return policy.NewReviewGate(cfg, nil)
 	}
 	jp.SetWebSearchMaxUses(0) // the judge never needs web search
 	cfg.JudgeName = model
-	return policy.NewGate(cfg, judge.NewLLM(jp))
+	return policy.NewReviewGate(cfg, judge.NewLLM(jp))
 }
 
 // selectProvider returns the Anthropic provider if it can authenticate,
-// otherwise the offline stub. HARNESS_MODEL overrides the default model.
+// otherwise the offline stub. PLUTO_MODEL overrides the default model.
 func selectProvider() llm.Provider {
 	if p, err := anthropic.New(defaultModel()); err == nil {
 		return p
 	} else {
-		fmt.Fprintln(os.Stderr, "harness: falling back to stub provider:", err)
+		fmt.Fprintln(os.Stderr, "pluto: falling back to stub provider:", err)
 	}
 	return llm.Stub{}
 }

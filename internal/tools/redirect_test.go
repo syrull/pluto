@@ -13,7 +13,7 @@ func TestRedirectBash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Getwd() error = %v", err)
 	}
-	
+
 	// Find the project root by looking for go.mod
 	projectRoot := wd
 	for {
@@ -29,7 +29,7 @@ func TestRedirectBash(t *testing.T) {
 
 	// Prepare file paths for tests
 	catFile := filepath.Join(projectRoot, "internal", "tools", "read.go")
-	
+
 	tests := []struct {
 		name          string
 		command       string

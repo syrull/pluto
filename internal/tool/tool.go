@@ -1,4 +1,4 @@
-// Package tool defines the contract every harness capability implements and provides tool registration.
+// Package tool defines the contract every pluto capability implements and provides tool registration.
 package tool
 
 import (

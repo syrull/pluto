@@ -7,8 +7,8 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/glamour"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/glamour"
 
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/tui/widgets"

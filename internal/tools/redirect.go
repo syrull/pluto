@@ -109,7 +109,6 @@ func singleFileOperand(args []string) (string, bool) {
 	return args[0], true
 }
 
-
 // runRead invokes the Read tool with the given args.
 func runRead(ctx context.Context, a readArgs) (string, error) {
 	raw, _ := json.Marshal(a)

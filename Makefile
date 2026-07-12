@@ -1,0 +1,29 @@
+BINARY := pluto
+
+.PHONY: all build run test vet fmt fmt-check tidy clean
+
+all: fmt-check vet test build
+
+build:
+	go build -o bin/$(BINARY) .
+
+run:
+	go run .
+
+test:
+	go test ./...
+
+vet:
+	go vet ./...
+
+fmt:
+	gofmt -w .
+
+fmt-check:
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+
+tidy:
+	go mod tidy
+
+clean:
+	rm -rf bin

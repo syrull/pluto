@@ -14,13 +14,13 @@ func bashCall(cmd string) llm.ToolCall {
 	return llm.ToolCall{Name: "bash", Args: args}
 }
 
-func newGate(t *testing.T, j judge.Judge, mut func(*Config)) *Gate {
+func newGate(t *testing.T, j judge.Judge, mut func(*Config)) *ReviewGate {
 	t.Helper()
 	cfg := Config{Mode: ModeAuto, OnJudgeError: judge.DecisionBlock, FastPath: true}
 	if mut != nil {
 		mut(&cfg)
 	}
-	return NewGate(cfg, j)
+	return NewReviewGate(cfg, j)
 }
 
 func TestReviewGuardBlocksBeforeJudge(t *testing.T) {
@@ -122,16 +122,16 @@ func TestAutoController(t *testing.T) {
 		t.Fatal("disabled gate should allow everything")
 	}
 
-	guardOnly := NewGate(Config{Mode: ModeAuto}, nil)
+	guardOnly := NewReviewGate(Config{Mode: ModeAuto}, nil)
 	if guardOnly.JudgeName() != "guard-only" {
 		t.Fatalf("JudgeName = %q, want guard-only", guardOnly.JudgeName())
 	}
 }
 
 func TestLoadConfigDefaultsOn(t *testing.T) {
-	t.Setenv("HARNESS_AUTO", "")
-	t.Setenv("HARNESS_AUTO_ON_JUDGE_ERR", "")
-	t.Setenv("HARNESS_AUTO_FASTPATH", "")
+	t.Setenv("PLUTO_AUTO", "")
+	t.Setenv("PLUTO_AUTO_ON_JUDGE_ERR", "")
+	t.Setenv("PLUTO_AUTO_FASTPATH", "")
 	cfg := LoadConfig()
 	if cfg.Mode != ModeAuto {
 		t.Fatalf("default Mode = %q, want auto", cfg.Mode)
@@ -143,9 +143,9 @@ func TestLoadConfigDefaultsOn(t *testing.T) {
 		t.Fatal("default FastPath = false, want true")
 	}
 
-	t.Setenv("HARNESS_AUTO", "off")
-	t.Setenv("HARNESS_AUTO_ON_JUDGE_ERR", "allow")
-	t.Setenv("HARNESS_AUTO_FASTPATH", "off")
+	t.Setenv("PLUTO_AUTO", "off")
+	t.Setenv("PLUTO_AUTO_ON_JUDGE_ERR", "allow")
+	t.Setenv("PLUTO_AUTO_FASTPATH", "off")
 	cfg = LoadConfig()
 	if cfg.Mode != ModeOff || cfg.OnJudgeError != judge.DecisionAllow || cfg.FastPath {
 		t.Fatalf("env-driven config = %+v", cfg)

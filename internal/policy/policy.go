@@ -1,5 +1,5 @@
 // Package policy composes the offline guard denylist and the LLM judge into a
-// single review Gate the agent consults before running a tool call.
+// single review gate the agent consults before running a tool call.
 package policy
 
 import (
@@ -23,10 +23,10 @@ const (
 	ModeOff  Mode = "off"  // no review; every call passes through
 )
 
-// DefaultMode is what the harness runs when HARNESS_AUTO is unset.
+// DefaultMode is what pluto runs when PLUTO_AUTO is unset.
 const DefaultMode = ModeAuto
 
-// Config controls a Gate's behavior.
+// Config controls a ReviewGate's behavior.
 type Config struct {
 	Mode         Mode
 	OnJudgeError judge.Decision // allow|block when the judge fails
@@ -34,32 +34,32 @@ type Config struct {
 	JudgeName    string         // display name of the judge model, for status
 }
 
-// Gate reviews bash commands through the guard denylist and the judge. Other
+// ReviewGate reviews bash commands through the guard denylist and the judge. Other
 // tools pass through. It is safe for concurrent use.
-type Gate struct {
+type ReviewGate struct {
 	mu    sync.RWMutex
 	cfg   Config
 	judge judge.Judge // may be nil (guard-only review)
 }
 
 var (
-	_ agent.Gate           = (*Gate)(nil)
-	_ agent.AutoController = (*Gate)(nil)
+	_ agent.Gate           = (*ReviewGate)(nil)
+	_ agent.AutoController = (*ReviewGate)(nil)
 )
 
-// NewGate builds a gate from cfg and an optional judge (nil ⇒ guard-only).
-func NewGate(cfg Config, j judge.Judge) *Gate {
+// NewReviewGate builds a gate from cfg and an optional judge (nil ⇒ guard-only).
+func NewReviewGate(cfg Config, j judge.Judge) *ReviewGate {
 	if cfg.OnJudgeError == "" {
 		cfg.OnJudgeError = judge.DecisionBlock
 	}
 	if cfg.Mode == "" {
 		cfg.Mode = DefaultMode
 	}
-	return &Gate{cfg: cfg, judge: j}
+	return &ReviewGate{cfg: cfg, judge: j}
 }
 
 // Review implements agent.Gate.
-func (g *Gate) Review(ctx context.Context, call llm.ToolCall) agent.ReviewResult {
+func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.ReviewResult {
 	g.mu.RLock()
 	cfg, j := g.cfg, g.judge
 	g.mu.RUnlock()
@@ -103,14 +103,14 @@ func (g *Gate) Review(ctx context.Context, call llm.ToolCall) agent.ReviewResult
 }
 
 // AutoEnabled implements agent.AutoController.
-func (g *Gate) AutoEnabled() bool {
+func (g *ReviewGate) AutoEnabled() bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.cfg.Mode == ModeAuto
 }
 
 // SetAutoEnabled implements agent.AutoController.
-func (g *Gate) SetAutoEnabled(on bool) {
+func (g *ReviewGate) SetAutoEnabled(on bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if on {
@@ -121,7 +121,7 @@ func (g *Gate) SetAutoEnabled(on bool) {
 }
 
 // JudgeName implements agent.AutoController.
-func (g *Gate) JudgeName() string {
+func (g *ReviewGate) JudgeName() string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if g.judge == nil {
@@ -183,14 +183,14 @@ func isSafeRead(cmd string) bool {
 // LoadConfig reads auto-mode configuration from the environment.
 func LoadConfig() Config {
 	cfg := Config{Mode: DefaultMode, OnJudgeError: judge.DecisionBlock, FastPath: true}
-	switch env("HARNESS_AUTO") {
+	switch env("PLUTO_AUTO") {
 	case "off", "0", "false", "no":
 		cfg.Mode = ModeOff
 	}
-	if env("HARNESS_AUTO_ON_JUDGE_ERR") == "allow" {
+	if env("PLUTO_AUTO_ON_JUDGE_ERR") == "allow" {
 		cfg.OnJudgeError = judge.DecisionAllow
 	}
-	switch env("HARNESS_AUTO_FASTPATH") {
+	switch env("PLUTO_AUTO_FASTPATH") {
 	case "off", "0", "false", "no":
 		cfg.FastPath = false
 	}
