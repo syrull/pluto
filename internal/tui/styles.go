@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 var (
 	styleUser        = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)

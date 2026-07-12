@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/llm"
@@ -177,11 +177,11 @@ func TestWindowSizeFirstSetReady(t *testing.T) {
 		t.Fatalf("expected ready=true after first WindowSizeMsg, got false")
 	}
 	wantHeight := 6 - footerHeight
-	if got.vp.Height != wantHeight {
-		t.Fatalf("vp.Height = %d, want %d", got.vp.Height, wantHeight)
+	if got.vp.Height() != wantHeight {
+		t.Fatalf("vp.Height = %d, want %d", got.vp.Height(), wantHeight)
 	}
-	if got.vp.Width != 40 {
-		t.Fatalf("vp.Width = %d, want 40", got.vp.Width)
+	if got.vp.Width() != 40 {
+		t.Fatalf("vp.Width = %d, want 40", got.vp.Width())
 	}
 }
 
@@ -191,16 +191,16 @@ func TestWindowSizeFloorMinHeight(t *testing.T) {
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 2})
 	got := m.(model)
 
-	if got.vp.Height != 1 {
-		t.Fatalf("vp.Height = %d, want 1 (floored)", got.vp.Height)
+	if got.vp.Height() != 1 {
+		t.Fatalf("vp.Height = %d, want 1 (floored)", got.vp.Height())
 	}
 
 	var m2 tea.Model = model{md: newRenderer(80)}
 	m2, _ = m2.Update(tea.WindowSizeMsg{Width: 40, Height: 1})
 	got2 := m2.(model)
 
-	if got2.vp.Height != 1 {
-		t.Fatalf("vp.Height = %d, want 1 (floored)", got2.vp.Height)
+	if got2.vp.Height() != 1 {
+		t.Fatalf("vp.Height = %d, want 1 (floored)", got2.vp.Height())
 	}
 }
 
@@ -220,11 +220,11 @@ func TestWindowSizeResize(t *testing.T) {
 		t.Fatalf("ready should stay true after second WindowSizeMsg, got false")
 	}
 	wantHeight := 10 - footerHeight
-	if second.vp.Height != wantHeight {
-		t.Fatalf("vp.Height = %d, want %d", second.vp.Height, wantHeight)
+	if second.vp.Height() != wantHeight {
+		t.Fatalf("vp.Height = %d, want %d", second.vp.Height(), wantHeight)
 	}
-	if second.vp.Width != 50 {
-		t.Fatalf("vp.Width = %d, want 50", second.vp.Width)
+	if second.vp.Width() != 50 {
+		t.Fatalf("vp.Width = %d, want 50", second.vp.Width())
 	}
 }
 
@@ -260,15 +260,22 @@ func TestScrollKeysChangePosition(t *testing.T) {
 	inputBefore := got.input.Value()
 
 	// Apply each scroll key.
-	for _, msgType := range []tea.KeyType{tea.KeyPgUp, tea.KeyPgDown, tea.KeyCtrlU, tea.KeyCtrlD, tea.KeyUp, tea.KeyDown} {
-		m, _ = m.Update(tea.KeyMsg{Type: msgType})
+	for _, kp := range []tea.KeyPressMsg{
+		{Code: tea.KeyPgUp},
+		{Code: tea.KeyPgDown},
+		{Code: 'u', Mod: tea.ModCtrl},
+		{Code: 'd', Mod: tea.ModCtrl},
+		{Code: tea.KeyUp},
+		{Code: tea.KeyDown},
+	} {
+		m, _ = m.Update(kp)
 		got = m.(model)
 		if got.input.Value() != inputBefore {
 			t.Fatalf("scroll key changed input buffer from %q to %q", inputBefore, got.input.Value())
 		}
 	}
 	// vp.YOffset should have changed (we're not at bottom anymore).
-	if got.vp.YOffset == 0 {
+	if got.vp.YOffset() == 0 {
 		t.Fatalf("expected vp.YOffset > 0 after scrolling, got 0")
 	}
 }
@@ -283,17 +290,17 @@ func TestPrintableKeyRegression(t *testing.T) {
 		m, _ = m.Update(eventMsg{Kind: "text", Text: "filler"})
 	}
 	got = m.(model)
-	offsetBefore := got.vp.YOffset
+	offsetBefore := got.vp.YOffset()
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	got = m.(model)
 
 	if got.input.Value() != "jk" {
 		t.Fatalf("input = %q, want %q", got.input.Value(), "jk")
 	}
-	if got.vp.YOffset != offsetBefore {
-		t.Fatalf("vp.YOffset changed from %d to %d (j/k should not scroll)", offsetBefore, got.vp.YOffset)
+	if got.vp.YOffset() != offsetBefore {
+		t.Fatalf("vp.YOffset changed from %d to %d (j/k should not scroll)", offsetBefore, got.vp.YOffset())
 	}
 }
 
@@ -308,7 +315,7 @@ func TestNoYankWhenScrolledUp(t *testing.T) {
 	}
 	got = m.(model)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
 	got = m.(model)
 	if got.vp.AtBottom() {
 		t.Fatalf("expected AtBottom()=false after PageUp, got true")
@@ -347,7 +354,7 @@ func TestViewFooterBusy(t *testing.T) {
 	in := newInput(80)
 	in.SetValue("hello")
 	m := &model{busy: true, input: in}
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "working") {
 		t.Fatalf("busy footer should contain \"working\", got:\n%s", view)
 	}
@@ -364,7 +371,7 @@ func TestViewFooterNotReady(t *testing.T) {
 		ready: false,
 		input: in,
 	}
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "hello") {
 		t.Fatalf("not-ready view should contain input \"hello\", got:\n%s", view)
 	}
@@ -524,12 +531,12 @@ func TestViewFooterReady(t *testing.T) {
 	m := &model{
 		md:    newRenderer(80),
 		ready: true,
-		vp:    viewport.Model{Width: 40, Height: 6},
+		vp:    viewport.New(viewport.WithWidth(40), viewport.WithHeight(6)),
 		input: in,
 	}
 	m.syncViewport()
 
-	view := m.View()
+	view := m.View().Content
 	// Should use vp.View() output.
 	if !strings.Contains(view, "\n") {
 		t.Fatalf("ready view should be multi-line (viewport + footer), got:\n%s", view)

@@ -72,10 +72,10 @@ func (m *model) resizeModal() {
 // outputAtScreen maps a screen row to the retained output of the transcript
 // block under it, if that block has one.
 func (m model) outputAtScreen(y int) (toolOutput, bool) {
-	if !m.ready || y < 0 || y >= m.vp.Height {
+	if !m.ready || y < 0 || y >= m.vp.Height() {
 		return toolOutput{}, false
 	}
-	return m.outputAtContentLine(m.vp.YOffset + y)
+	return m.outputAtContentLine(m.vp.YOffset() + y)
 }
 
 func (m model) outputAtContentLine(target int) (toolOutput, bool) {

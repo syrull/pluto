@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/llm"
@@ -188,25 +188,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			h = 1
 		}
 		if !m.ready {
-			m.vp = viewport.New(msg.Width, h)
+			m.vp = viewport.New(viewport.WithWidth(msg.Width), viewport.WithHeight(h))
 			m.vp.KeyMap = scrollKeymap()
 			m.input = newInput(msg.Width)
 			m.ready = true
 		} else {
-			m.vp.Width = msg.Width
-			m.vp.Height = h
+			m.vp.SetWidth(msg.Width)
+			m.vp.SetHeight(h)
 			m.input.SetWidth(msg.Width)
 		}
 		m.syncViewport()
 		m.resizeModal()
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
+		ks := msg.String()
 		if m.modal != nil {
-			switch msg.Type {
-			case tea.KeyCtrlC:
+			switch ks {
+			case "ctrl+c":
 				return m, tea.Quit
-			case tea.KeyEsc:
+			case "esc":
 				m.modal = nil
 			default:
 				return m, m.modal.Update(msg)
@@ -214,14 +215,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.picker != nil {
-			switch msg.Type {
-			case tea.KeyCtrlC:
+			switch ks {
+			case "ctrl+c":
 				return m, tea.Quit
-			case tea.KeyUp:
+			case "up":
 				m.picker.Up()
-			case tea.KeyDown:
+			case "down":
 				m.picker.Down()
-			case tea.KeyEnter:
+			case "enter":
 				target := m.picker.Selected()
 				kind := m.pickerKind
 				m.picker = nil
@@ -230,24 +231,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.pushText(status)
 					m.syncViewport()
 				}
-			case tea.KeyEsc:
+			case "esc":
 				m.picker = nil
 				m.pickerKind = pickerNone
 			}
 			return m, nil
 		}
-		switch msg.Type {
-		case tea.KeyCtrlC:
+		switch ks {
+		case "ctrl+c":
 			return m, tea.Quit
-		case tea.KeyPgUp, tea.KeyPgDown, tea.KeyCtrlU, tea.KeyCtrlD, tea.KeyUp, tea.KeyDown:
+		case "pgup", "pgdown", "ctrl+u", "ctrl+d", "up", "down":
 			var cmd tea.Cmd
 			m.vp, cmd = m.vp.Update(msg)
 			return m, cmd
-		case tea.KeyEnter:
-			if msg.Alt {
-				m.input.InsertRune('\n')
-				return m, nil
-			}
+		case "alt+enter":
+			m.input.InsertRune('\n')
+			return m, nil
+		case "enter":
 			if m.busy || strings.TrimSpace(m.input.Value()) == "" {
 				return m, nil
 			}
@@ -330,14 +330,16 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.picker != nil {
 		return m, nil
 	}
-	if tea.MouseEvent(msg).IsWheel() {
+	switch e := msg.(type) {
+	case tea.MouseWheelMsg:
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
-	}
-	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-		if o, ok := m.outputAtScreen(msg.Y); ok {
-			m.openModal(o)
+	case tea.MouseClickMsg:
+		if e.Button == tea.MouseLeft {
+			if o, ok := m.outputAtScreen(e.Y); ok {
+				m.openModal(o)
+			}
 		}
 	}
 	return m, nil

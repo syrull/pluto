@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
 	"golang.org/x/term"
@@ -145,7 +146,16 @@ func (m *model) renderThinkBox(think string) string {
 }
 
 // View renders the transcript layout with the status line and input footer.
-func (m model) View() string {
+func (m model) View() tea.View {
+	v := tea.NewView(m.content())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// content renders the screen body: the modal when open, otherwise the
+// transcript viewport above the status line and input footer.
+func (m model) content() string {
 	if m.modal != nil && m.ready {
 		return m.modal.View()
 	}

@@ -4,7 +4,7 @@ package widgets
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // ListStyle carries the styles a ListPicker renders with.

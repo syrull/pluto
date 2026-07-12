@@ -1,10 +1,10 @@
 package widgets
 
 import (
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // ModalStyle carries the styles a Modal renders with.
@@ -27,7 +27,7 @@ type Modal struct {
 
 // NewModal builds a modal over content; call SetSize before View.
 func NewModal(title, content string, style ModalStyle) *Modal {
-	m := &Modal{title: Sanitize(title), content: Sanitize(content), style: style, vp: viewport.New(0, 0)}
+	m := &Modal{title: Sanitize(title), content: Sanitize(content), style: style, vp: viewport.New()}
 	m.vp.KeyMap = modalKeyMap()
 	return m
 }
@@ -47,8 +47,8 @@ func modalKeyMap() viewport.KeyMap {
 func (m *Modal) SetSize(width, height int) {
 	m.width, m.height = width, height
 	w, h := m.inner()
-	m.vp.Width = w
-	m.vp.Height = h
+	m.vp.SetWidth(w)
+	m.vp.SetHeight(h)
 	m.vp.SetContent(lipgloss.NewStyle().Width(w).Render(m.content))
 }
 

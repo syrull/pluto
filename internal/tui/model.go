@@ -3,12 +3,12 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/pluto/harness/internal/agent"
 	"github.com/pluto/harness/internal/tui/widgets"
@@ -97,10 +97,12 @@ func newInput(width int) textarea.Model {
 	ta.CharLimit = 0
 	ta.Prompt = ""
 	ta.Placeholder = ""
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
-	ta.SetPromptFunc(2, func(line int) string {
-		if line == 0 {
+	s := ta.Styles()
+	s.Focused.CursorLine = lipgloss.NewStyle()
+	s.Blurred.CursorLine = lipgloss.NewStyle()
+	ta.SetStyles(s)
+	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
 			return stylePrompt.Render("› ")
 		}
 		return "  "
@@ -114,7 +116,7 @@ func newInput(width int) textarea.Model {
 // New builds the Bubbletea program.
 func New(a *agent.Agent, login *LoginHook) *tea.Program {
 	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80)}
-	return tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	return tea.NewProgram(m)
 }
 
 func (m model) Init() tea.Cmd { return nil }

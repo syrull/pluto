@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestShowButtonForTruncatedResult(t *testing.T) {
@@ -52,8 +52,8 @@ func TestClickOpensModalAndEscCloses(t *testing.T) {
 	if len(got.outputs) != 1 {
 		t.Fatalf("expected 1 retained output, got %d", len(got.outputs))
 	}
-	if got.vp.YOffset != 0 {
-		t.Fatalf("precondition: expected YOffset 0, got %d", got.vp.YOffset)
+	if got.vp.YOffset() != 0 {
+		t.Fatalf("precondition: expected YOffset 0, got %d", got.vp.YOffset())
 	}
 	if !strings.Contains(got.outputs[0].title, "ls -la") {
 		t.Fatalf("retained title = %q, want it to contain the command", got.outputs[0].title)
@@ -67,13 +67,13 @@ func TestClickOpensModalAndEscCloses(t *testing.T) {
 		t.Fatal("no clickable output block found")
 	}
 
-	tm, _ = tm.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, Y: y})
+	tm, _ = tm.Update(tea.MouseClickMsg{Button: tea.MouseLeft, Y: y})
 	got = tm.(model)
 	if got.modal == nil {
 		t.Fatal("expected modal to open on click over the tool result")
 	}
 
-	tm, _ = tm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if tm.(model).modal != nil {
 		t.Fatal("expected modal to close on esc")
 	}
@@ -92,7 +92,7 @@ func TestModalWheelScrolls(t *testing.T) {
 	}
 
 	var m tea.Model = got
-	m, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	if m.(model).modal.AtTop() {
 		t.Fatal("wheel down should scroll the modal off the top")
 	}
