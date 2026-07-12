@@ -1,9 +1,12 @@
 package tui
 
 import (
-	"fmt"
-	"strings"
-	"testing"
+	"bytes"
+	"context"
+ 	"fmt"
+ 	"strings"
+ 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -543,5 +546,59 @@ func TestViewFooterReady(t *testing.T) {
 	}
 	if !strings.Contains(view, "test") {
 		t.Fatalf("ready view should contain input, got:\n%s", view)
+	}
+}
+
+// TestProgramRunsHeadlessAndQuits drives a real v2 *tea.Program headless to
+// prove the v1→v2 migration works end-to-end: the initial WindowSizeMsg sets
+// up the viewport (ready=true), View() renders a tea.View with AltScreen and
+// cell-motion mouse enabled, and a ctrl+c key press routes through Update to
+// tea.Quit for a clean shutdown — not a context-kill timeout.
+func TestProgramRunsHeadlessAndQuits(t *testing.T) {
+	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "")
+	m := model{agent: ag, md: newRenderer(80), input: newInput(80)}
+
+	var in, out bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	p := tea.NewProgram(m,
+		tea.WithInput(&in),
+		tea.WithOutput(&out),
+		tea.WithoutSignalHandler(),
+		tea.WithWindowSize(80, 24),
+		tea.WithContext(ctx),
+	)
+
+	go func() {
+		// Let the event loop process the initial WindowSizeMsg and render a frame.
+		time.Sleep(100 * time.Millisecond)
+		p.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	}()
+
+	final, err := p.Run()
+	if err != nil {
+		t.Fatalf("program.Run error: %v\nrendered output:\n%s", err, out.String())
+	}
+
+	got, ok := final.(model)
+	if !ok {
+		t.Fatalf("final model is %T, want model", final)
+	}
+	if !got.ready {
+		t.Fatal("model not ready: initial WindowSizeMsg was not processed")
+	}
+	if got.width != 80 || got.height != 24 {
+		t.Fatalf("model dims = %dx%d, want 80x24", got.width, got.height)
+	}
+	v := got.View()
+	if !v.AltScreen {
+		t.Error("View().AltScreen should be true")
+	}
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("View().MouseMode = %v, want MouseModeCellMotion", v.MouseMode)
+	}
+	if strings.TrimSpace(v.Content) == "" {
+		t.Errorf("View().Content empty; rendered output was:\n%s", out.String())
 	}
 }
