@@ -23,6 +23,7 @@ type Modal struct {
 	width   int
 	height  int
 	vp      viewport.Model
+	copied  bool
 }
 
 // NewModal builds a modal over content; call SetSize before View.
@@ -75,11 +76,20 @@ func (m *Modal) Update(msg tea.Msg) tea.Cmd {
 // AtTop reports whether the body is scrolled to the top.
 func (m *Modal) AtTop() bool { return m.vp.AtTop() }
 
+// Content returns the modal's raw text, for copying to the clipboard.
+func (m *Modal) Content() string { return m.content }
+
+// MarkCopied flips the modal into its "copied" state so View reflects it.
+func (m *Modal) MarkCopied() { m.copied = true }
+
 // View renders the modal centered over the terminal.
 func (m *Modal) View() string {
 	w, _ := m.inner()
 	title := m.style.Title.MaxWidth(w).Render(m.title)
-	hint := m.style.Hint.Render("↑/↓/wheel scroll · esc close")
+	hint := m.style.Hint.Render("↑/↓/wheel scroll · c copy · esc close")
+	if m.copied {
+		hint = m.style.Hint.Render("✓ copied to clipboard · esc close")
+	}
 	body := lipgloss.JoinVertical(lipgloss.Left, title, "", m.vp.View(), hint)
 	box := m.style.Box.Width(w).Render(body)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)

@@ -28,7 +28,7 @@ func (m *model) appendToolResult(ev agent.Event) {
 	if o, ok := m.retainedOutput(ev); ok {
 		m.outputs = append(m.outputs, o)
 		id = len(m.outputs)
-		text += "\n  " + styleShowBtn.Render(" Show ▸ ")
+		text += "\n  " + m.showAffordance()
 	}
 	m.lines = append(m.lines, entry{text: text, outputID: id})
 	m.pendingTool = ""
@@ -56,6 +56,15 @@ func (m *model) retainedOutput(ev agent.Event) (toolOutput, bool) {
 		title = ev.Tool + ": " + oneLine(bashCommandArg(m.pendingTool, m.pendingArgs))
 	}
 	return toolOutput{title: title, full: full}, true
+}
+
+// showAffordance renders the marker for a retained output: a clickable button
+// when the mouse is captured, otherwise the keyboard hint that reaches it.
+func (m *model) showAffordance() string {
+	if m.mouse {
+		return styleShowBtn.Render(" Show ▸ ")
+	}
+	return styleHint.Render("[ctrl+o] view")
 }
 
 func (m *model) openModal(o toolOutput) {
@@ -87,16 +96,21 @@ func (m model) outputAtScreen(y int) (toolOutput, bool) {
 }
 
 func (m model) outputAtContentLine(target int) (toolOutput, bool) {
+	if e, ok := m.entryAtContentLine(target); ok && e.outputID > 0 && e.outputID <= len(m.outputs) {
+		return m.outputs[e.outputID-1], true
+	}
+	return toolOutput{}, false
+}
+
+// entryAtContentLine returns the transcript entry spanning content row target.
+func (m model) entryAtContentLine(target int) (entry, bool) {
 	cur := 0
 	for _, e := range m.lines {
 		h := strings.Count(e.text, "\n") + 1
 		if target >= cur && target < cur+h {
-			if e.outputID > 0 && e.outputID <= len(m.outputs) {
-				return m.outputs[e.outputID-1], true
-			}
-			return toolOutput{}, false
+			return e, true
 		}
 		cur += h
 	}
-	return toolOutput{}, false
+	return entry{}, false
 }

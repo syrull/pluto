@@ -36,11 +36,13 @@ type LoginHook struct {
 	Complete  func(flow any, pastedInput string) (status string, err error)
 }
 
-// entry is one committed transcript block, optionally tied to a retained tool
-// output (outputID > 0) so a click or ctrl+o can reopen its full text in a modal.
+// entry is one committed transcript block. An entry may be tied to a retained
+// tool output (outputID > 0) so a click or ctrl+o reopens its full text in a
+// modal, or to a retained code block (copyID > 0) so a click copies it.
 type entry struct {
 	text     string
 	outputID int
+	copyID   int
 }
 
 type model struct {
@@ -77,6 +79,12 @@ type model struct {
 	pendingTool string
 	pendingArgs string
 	modal       *widgets.Modal
+
+	// codeBlocks retains fenced code blocks from assistant messages so they can
+	// be copied to the clipboard; notice is a transient status line (e.g. a copy
+	// confirmation) cleared on the next key or mouse event.
+	codeBlocks []codeBlock
+	notice     string
 }
 
 // pickerKind identifies which setting an open ListPicker edits.

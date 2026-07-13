@@ -30,6 +30,7 @@ var (
 	styleReview     = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow: auto-mode review line
 
 	styleShowBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
+	styleCopyBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("5")).Bold(true)
 	styleBashBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("4")).

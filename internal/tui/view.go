@@ -122,9 +122,28 @@ func (m *model) flushStream() {
 		m.streamThink = ""
 	}
 	if text := strings.TrimSpace(m.streamText); text != "" {
-		m.pushText(m.renderMarkdown(text))
+		m.pushMarkdown(text)
 		m.streamText = ""
 	}
+}
+
+// pushMarkdown commits assistant markdown and retains each fenced code block it
+// contains behind a copy affordance.
+func (m *model) pushMarkdown(text string) {
+	m.pushText(m.renderMarkdown(text))
+	for _, b := range extractCodeBlocks(text) {
+		m.codeBlocks = append(m.codeBlocks, b)
+		m.lines = append(m.lines, entry{text: m.copyAffordance(b), copyID: len(m.codeBlocks)})
+	}
+}
+
+// copyAffordance renders the marker for a retained code block: a clickable
+// button when the mouse is captured, otherwise the keyboard hint that copies it.
+func (m *model) copyAffordance(b codeBlock) string {
+	if m.mouse {
+		return "  " + styleCopyBtn.Render(" Copy "+b.title()+" ▸ ")
+	}
+	return "  " + styleHint.Render("[ctrl+y] copy "+b.title())
 }
 
 func (m *model) thinkBoxWidth() int {
@@ -202,12 +221,16 @@ func (m model) modelStatus() string {
 			status += fmt.Sprintf(" · context: %d%% / %s", pct, formatTokens(window))
 		}
 	}
+	line := styleModelStatus.Render(status)
 	if m.busy {
 		// The input stays live for steering, so the working state is surfaced
 		// here rather than by replacing the input box.
-		return styleWorking.Render("● working…") + styleModelStatus.Render(" · "+status)
+		line = styleWorking.Render("● working…") + styleModelStatus.Render(" · "+status)
 	}
-	return styleModelStatus.Render(status)
+	if m.notice != "" {
+		line += "  " + m.notice
+	}
+	return line
 }
 
 // formatTokens renders a token count compactly (e.g. 1000000 → "1M", 200000 → "200K").

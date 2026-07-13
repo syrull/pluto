@@ -43,6 +43,8 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.agent.Reset()
 		m.lines = nil
 		m.outputs = nil
+		m.codeBlocks = nil
+		m.notice = ""
 		m.pendingTool = ""
 		m.pendingArgs = ""
 		m.streamText = ""
@@ -203,12 +205,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		ks := msg.String()
+		m.notice = ""
 		if m.modal != nil {
 			switch ks {
 			case "ctrl+c":
 				return m, tea.Quit
 			case "esc":
 				m.modal = nil
+			case "c", "y":
+				m.modal.MarkCopied()
+				return m, tea.SetClipboard(m.modal.Content())
 			default:
 				return m, m.modal.Update(msg)
 			}
@@ -247,6 +253,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+o":
 			if o, ok := m.lastOutput(); ok {
 				m.openModal(o)
+			}
+			return m, nil
+		case "ctrl+y":
+			if b, ok := m.lastCode(); ok {
+				m.notice = styleHint.Render("✓ copied " + b.title() + " to clipboard")
+				return m, tea.SetClipboard(b.code)
 			}
 			return m, nil
 		case "alt+enter":
@@ -377,8 +389,12 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case tea.MouseClickMsg:
 		if e.Button == tea.MouseLeft {
+			m.notice = ""
 			if o, ok := m.outputAtScreen(e.Y); ok {
 				m.openModal(o)
+			} else if b, ok := m.codeAtScreen(e.Y); ok {
+				m.notice = styleHint.Render("✓ copied " + b.title() + " to clipboard")
+				return m, tea.SetClipboard(b.code)
 			}
 		}
 	}
