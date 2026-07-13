@@ -14,6 +14,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Format check
         run: |
           out=$(gofmt -l .)
