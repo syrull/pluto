@@ -40,4 +40,14 @@ var (
 			BorderForeground(lipgloss.Color("6")).
 			Padding(0, 1)
 	styleModalTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+
+	styleTreeBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("8"))
+	styleTreeBoxFocus = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("6"))
+	styleTreeCursor = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleTreeDir    = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
+	styleTreeFile   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 )

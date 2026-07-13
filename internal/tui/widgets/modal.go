@@ -17,14 +17,15 @@ type ModalStyle struct {
 // Modal is a centered, full-screen, scrollable text viewer. It is domain-free:
 // callers supply a title and content and drive it with SetSize/Update/View.
 type Modal struct {
-	title   string
-	content string // raw sanitized text; what Content() and copy return
-	display string // body rendered in the viewport, optionally colorized
-	style   ModalStyle
-	width   int
-	height  int
-	vp      viewport.Model
-	copied  bool
+	title    string
+	content  string // raw sanitized text; what Content() and copy return
+	display  string // body rendered in the viewport, optionally colorized
+	style    ModalStyle
+	width    int
+	height   int
+	vp       viewport.Model
+	copied   bool
+	editable bool
 }
 
 // NewModal builds a modal over content; call SetSize before View.
@@ -94,15 +95,22 @@ func (m *Modal) Content() string { return m.content }
 // MarkCopied flips the modal into its "copied" state so View reflects it.
 func (m *Modal) MarkCopied() { m.copied = true }
 
+// SetEditable toggles the "ctrl+g edit" affordance in the hint line.
+func (m *Modal) SetEditable(v bool) { m.editable = v }
+
 // View renders the modal centered over the terminal.
 func (m *Modal) View() string {
 	w, _ := m.inner()
 	title := m.style.Title.MaxWidth(w).Render(m.title)
-	hint := m.style.Hint.Render("↑/↓/wheel scroll · c copy · esc close")
-	if m.copied {
-		hint = m.style.Hint.Render("✓ copied to clipboard · esc close")
+	hint := "↑/↓/wheel scroll · c copy"
+	if m.editable {
+		hint += " · ctrl+g edit"
 	}
-	body := lipgloss.JoinVertical(lipgloss.Left, title, "", m.vp.View(), hint)
+	hint += " · esc close"
+	if m.copied {
+		hint = "✓ copied to clipboard · esc close"
+	}
+	body := lipgloss.JoinVertical(lipgloss.Left, title, "", m.vp.View(), m.style.Hint.Render(hint))
 	box := m.style.Box.Width(w).Render(body)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }

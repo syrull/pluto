@@ -2,11 +2,33 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/tool"
 )
+
+// ctxWindowProvider is a stub that also reports a context window, so
+// ContextUsage returns a usable ratio.
+type ctxWindowProvider struct{ llm.Stub }
+
+func (ctxWindowProvider) ContextWindow() int { return 1000 }
+
+func TestLoadSeedsContextUsage(t *testing.T) {
+	a := New(ctxWindowProvider{}, tool.NewRegistry(), "sys")
+	a.Load([]llm.Message{
+		{Role: llm.RoleUser, Content: strings.Repeat("hello ", 100)},
+		{Role: llm.RoleModel, Content: strings.Repeat("world ", 100)},
+	})
+	used, window, ok := a.ContextUsage()
+	if !ok || window != 1000 {
+		t.Fatalf("ContextUsage ok=%v window=%d, want ok with window 1000", ok, window)
+	}
+	if used <= 0 {
+		t.Fatalf("a resumed conversation should report nonzero context usage, got %d", used)
+	}
+}
 
 func TestSnapshotIsACopy(t *testing.T) {
 	a := New(llm.Stub{}, tool.NewRegistry(), "sys")

@@ -81,6 +81,11 @@ type model struct {
 	pendingTool string
 	pendingArgs string
 	modal       *widgets.Modal
+	// modalPath is the file the open modal is viewing (for ctrl+g "open in
+	// editor"), and modalIsFile marks a file/diff modal so it can be refreshed
+	// after an edit; both are empty/false for pathless outputs (bash/find).
+	modalPath   string
+	modalIsFile bool
 
 	// codeBlocks retains fenced code blocks from assistant messages so they can
 	// be copied to the clipboard; notice is the transient notifications-widget
@@ -94,7 +99,30 @@ type model struct {
 	// autosave.
 	store       *session.Store
 	sessionName string
+
+	// showHome renders the launch dashboard in place of the transcript; it starts
+	// true, dismisses on the first typed/submitted input, and reopens via /dash.
+	// git/gitReady hold the async-gathered project state; tip is the launch hint.
+	showHome bool
+	git      gitInfo
+	gitReady bool
+	tip      string
+
+	// tree is the sidebar file explorer; changes is the second pane listing only
+	// modified/created files (nil when the tree is clean); focus selects which
+	// pane the arrow keys drive.
+	tree    *widgets.Tree
+	changes *widgets.Tree
+	focus   sidebarPane
 }
+
+// sidebarPane identifies which home-screen pane has keyboard focus.
+type sidebarPane int
+
+const (
+	paneTree sidebarPane = iota
+	paneChanges
+)
 
 // pickerKind identifies which setting an open ListPicker edits.
 type pickerKind int
@@ -137,11 +165,11 @@ func newInput(width int) textarea.Model {
 
 // New builds the Bubbletea program.
 func New(a *agent.Agent, login *LoginHook) *tea.Program {
-	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80), mouse: mouseEnabled()}
+	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80), mouse: mouseEnabled(), showHome: true, tip: pickTip()}
 	return tea.NewProgram(m)
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd { return gatherGitCmd }
 
 func scrollKeymap() viewport.KeyMap {
 	return viewport.KeyMap{

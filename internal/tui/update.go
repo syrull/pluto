@@ -53,6 +53,10 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.notice = "✓ started a new conversation"
 		return "", nil
 
+	case "/dash":
+		m.showHome = true
+		return "", nil
+
 	case "/save":
 		name := ""
 		if len(fields) > 1 {
@@ -74,25 +78,12 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 				return styleHint.Render("no saved conversations yet — use /save first"), nil
 			}
 			m.picker = newResumePicker(metas)
+			m.picker.SetSize(m.width, m.height)
 			m.pickerKind = pickerResume
 			return "", nil
 		}
 		m.resume(fields[1])
 		return "", nil
-
-	case "/sessions", "/list":
-		store, err := m.sessionStore()
-		if err != nil {
-			return styleErr.Render("✗ sessions unavailable: " + err.Error()), nil
-		}
-		metas, err := store.List()
-		if err != nil {
-			return styleErr.Render("✗ " + err.Error()), nil
-		}
-		if len(metas) == 0 {
-			return styleHint.Render("no saved conversations yet — use /save first"), nil
-		}
-		return renderSessionList(metas), nil
 
 	case "/login":
 		if m.login == nil {
@@ -137,6 +128,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 				return styleErr.Render("✗ no models available to switch to"), nil
 			}
 			m.picker = newModelPicker(models, sw.Model())
+			m.picker.SetSize(m.width, m.height)
 			m.pickerKind = pickerModel
 			return "", nil
 		}
@@ -156,6 +148,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		levels := th.ThinkLevels()
 		if len(fields) == 1 {
 			m.picker = newThinkPicker(levels, th.ThinkLevel())
+			m.picker.SetSize(m.width, m.height)
 			m.pickerKind = pickerThink
 			return "", nil
 		}
@@ -247,6 +240,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.SetHeight(h)
 			m.input.SetWidth(msg.Width)
 		}
+		if m.tree == nil {
+			m.tree = newFileTree()
+			if m.tree != nil && m.gitReady {
+				m.tree.SetStatus(m.buildStatusStyles())
+				m.changes = m.buildChangesList()
+			}
+		}
+		if m.picker != nil {
+			m.picker.SetSize(msg.Width, msg.Height)
+		}
 		m.syncViewport()
 		m.resizeModal()
 		return m, nil
@@ -263,6 +266,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "c", "y":
 				m.modal.MarkCopied()
 				return m, tea.SetClipboard(m.modal.Content())
+			case "ctrl+g":
+				if cmd := openInEditor(m.modalPath); cmd != nil {
+					return m, cmd
+				}
 			default:
 				return m, m.modal.Update(msg)
 			}
@@ -287,6 +294,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pickerKind = pickerNone
 			}
 			return m, nil
+		}
+		// While the dashboard is up, arrows/enter drive the file tree; unclaimed
+		// keys (typing, ctrl+*) fall through and dismiss it as before.
+		if m.showHome {
+			if done, cmd := m.homeKey(ks); done {
+				return m, cmd
+			}
 		}
 		switch ks {
 		case "ctrl+c":
@@ -315,6 +329,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "alt+enter":
+			m.showHome = false
 			m.input.InsertRune('\n')
 			return m, nil
 		case "enter":
@@ -322,6 +337,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if in == "" {
 				return m, nil
 			}
+			m.showHome = false
 			// The input stays live during generation: a plain message is queued
 			// to steer the running turn; slash commands wait until it's idle.
 			if m.busy {
@@ -354,6 +370,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport()
 			return m, cmd
 		default:
+			m.showHome = false
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
@@ -409,6 +426,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pushText(styleHint.Render("✓ " + msg.status))
 		}
 		m.syncViewport()
+		return m, nil
+	case gitInfoMsg:
+		m.git = gitInfo(msg)
+		m.gitReady = true
+		if m.tree != nil {
+			m.tree.SetStatus(m.buildStatusStyles())
+		}
+		m.changes = m.buildChangesList()
+		if m.changes == nil {
+			m.focus = paneTree
+		}
+		return m, nil
+	case editorDoneMsg:
+		// The editor may have changed the file; refresh a still-open file/diff
+		// modal so it reflects the edit.
+		if msg.err == nil && m.modal != nil && m.modalIsFile && m.modalPath != "" {
+			m.openFileDiff(m.modalPath)
+		}
 		return m, nil
 	}
 	// Bracketed paste (tea.PasteMsg) and the textarea's async ctrl+v clipboard
@@ -473,6 +508,10 @@ func (m *model) applyPick(kind pickerKind, target string) {
 	}
 }
 
+func pickerStyle() widgets.ListStyle {
+	return widgets.ListStyle{Title: styleHint, Selected: stylePickSel, Item: styleModel, Box: styleModalBox}
+}
+
 func newResumePicker(metas []session.Meta) *widgets.ListPicker {
 	items := make([]string, len(metas))
 	for i, meta := range metas {
@@ -482,7 +521,7 @@ func newResumePicker(metas []session.Meta) *widgets.ListPicker {
 		"resume conversation — ↑/↓ move · enter resume · esc cancel",
 		items,
 		"",
-		widgets.ListStyle{Title: styleHint, Selected: stylePickSel, Item: styleModel},
+		pickerStyle(),
 	)
 }
 
@@ -491,7 +530,7 @@ func newModelPicker(models []string, active string) *widgets.ListPicker {
 		"select model — ↑/↓ move · enter switch · esc cancel",
 		models,
 		active,
-		widgets.ListStyle{Title: styleHint, Selected: stylePickSel, Item: styleModel},
+		pickerStyle(),
 	)
 }
 
@@ -504,6 +543,6 @@ func newThinkPicker(levels []llm.ThinkLevel, active llm.ThinkLevel) *widgets.Lis
 		"extended thinking — ↑/↓ move · enter set · esc cancel",
 		items,
 		string(active),
-		widgets.ListStyle{Title: styleHint, Selected: stylePickSel, Item: styleModel},
+		pickerStyle(),
 	)
 }

@@ -101,14 +101,23 @@ func TestSaveNothingToSave(t *testing.T) {
 	}
 }
 
-func TestSessionsListsSaved(t *testing.T) {
+func TestResumeListsSavedInPicker(t *testing.T) {
 	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
-	m := &model{agent: seededAgent([]llm.Message{{Role: llm.RoleUser, Content: "hello there"}}), md: newRenderer(80), width: 80}
+	m := &model{agent: seededAgent([]llm.Message{{Role: llm.RoleUser, Content: "hello there"}}), md: newRenderer(80), width: 80, height: 24}
 	m.handleCommand("/save first")
 
-	status, _ := m.handleCommand("/sessions")
-	if !strings.Contains(status, "1 saved") || !strings.Contains(status, "first") || !strings.Contains(status, "hello there") {
-		t.Fatalf("/sessions output missing expected fields:\n%s", status)
+	status, _ := m.handleCommand("/resume")
+	if status != "" {
+		t.Fatalf("/resume should open a picker silently, got %q", status)
+	}
+	if m.picker == nil || m.pickerKind != pickerResume {
+		t.Fatal("/resume should open the resume picker")
+	}
+	if got := m.picker.Selected(); got != "first" {
+		t.Fatalf("resume picker should list the saved session, got %q", got)
+	}
+	if !strings.Contains(m.picker.View(), "first") {
+		t.Fatalf("resume picker view should show the session:\n%s", m.picker.View())
 	}
 }
 

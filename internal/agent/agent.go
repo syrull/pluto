@@ -131,7 +131,6 @@ func (a *Agent) Snapshot() []llm.Message {
 // ride along), then the transcript is trimmed to the context budget so a large
 // restored history is bounded on the next turn.
 func (a *Agent) Load(msgs []llm.Message) {
-	a.lastUsage = llm.Usage{}
 	a.TakeSteering()
 	a.transcript = nil
 	if a.systemPrompt != "" {
@@ -144,6 +143,9 @@ func (a *Agent) Load(msgs []llm.Message) {
 		a.transcript = append(a.transcript, m)
 	}
 	a.trimTranscript()
+	// Seed usage from the restored transcript so the context indicator reflects a
+	// resumed conversation before the next turn reports real token counts.
+	a.lastUsage = llm.Usage{InputTokens: estimateTokens(a.transcript)}
 }
 
 // Steer queues a user message to fold into a running turn at the next step

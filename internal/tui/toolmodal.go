@@ -77,6 +77,11 @@ func (m *model) openModal(o toolOutput) {
 	if o.path != "" {
 		m.modal.Highlight(func(s string) string { return highlightSource(s, o.path) })
 	}
+	m.modalPath = o.path
+	m.modalIsFile = false
+	if o.path != "" && editorAvailable() {
+		m.modal.SetEditable(true)
+	}
 	m.modal.SetSize(m.width, m.height)
 }
 

@@ -27,3 +27,15 @@ func TestModalContentUnaffectedWithoutHighlight(t *testing.T) {
 		t.Fatalf("Content() = %q, want %q", m.Content(), "plain body")
 	}
 }
+
+func TestModalEditableHint(t *testing.T) {
+	m := NewModal("title", "body", ModalStyle{})
+	m.SetSize(40, 12)
+	if strings.Contains(m.View(), "ctrl+g") {
+		t.Fatal("edit hint should be absent by default")
+	}
+	m.SetEditable(true)
+	if !strings.Contains(m.View(), "ctrl+g") {
+		t.Fatalf("edit hint should appear once editable:\n%s", m.View())
+	}
+}

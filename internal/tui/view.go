@@ -208,11 +208,13 @@ func (m model) content() string {
 	if m.modal != nil && m.ready {
 		return m.modal.View()
 	}
-	body := m.footer()
-	if m.picker != nil {
-		body = m.picker.View()
+	if m.picker != nil && m.ready {
+		return m.picker.View()
 	}
-	footer := m.notifications() + "\n" + m.modelStatus() + "\n" + body
+	footer := m.notifications() + "\n" + m.modelStatus() + "\n" + m.footer()
+	if m.showHome {
+		return m.homeBody() + "\n" + footer
+	}
 	if !m.ready {
 		return m.transcript() + "\n\n" + footer
 	}

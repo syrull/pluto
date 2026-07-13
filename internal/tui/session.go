@@ -155,19 +155,6 @@ func hasConversation(msgs []llm.Message) bool {
 	return false
 }
 
-// renderSessionList formats saved-conversation metadata for /sessions.
-func renderSessionList(metas []session.Meta) string {
-	var b strings.Builder
-	b.WriteString(styleHint.Render(fmt.Sprintf("%d saved conversation(s):", len(metas))))
-	for _, meta := range metas {
-		b.WriteString("\n")
-		b.WriteString(styleModel.Render(meta.ID))
-		b.WriteString(styleHint.Render(fmt.Sprintf("  %s · %d msg · %s",
-			meta.Title, meta.Count, meta.UpdatedAt.Format("2006-01-02 15:04"))))
-	}
-	return b.String()
-}
-
 // autosaveEnabled reports whether conversations are persisted automatically.
 // Autosave is on by default; PLUTO_AUTOSAVE=off opts out.
 func autosaveEnabled() bool {
