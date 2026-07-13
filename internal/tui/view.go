@@ -149,8 +149,21 @@ func (m *model) renderThinkBox(think string) string {
 func (m model) View() tea.View {
 	v := tea.NewView(m.content())
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	if m.mouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	return v
+}
+
+// mouseEnabled reports whether to capture mouse events. Off by default so the
+// terminal keeps native click-drag text selection; PLUTO_MOUSE=on enables
+// capture for wheel scroll and click-to-open.
+func mouseEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PLUTO_MOUSE"))) {
+	case "on", "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 // content renders the screen body: the modal when open, otherwise the

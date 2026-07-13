@@ -63,6 +63,14 @@ func (m *model) openModal(o toolOutput) {
 	m.modal.SetSize(m.width, m.height)
 }
 
+// lastOutput returns the most recently retained tool output, if any.
+func (m model) lastOutput() (toolOutput, bool) {
+	if len(m.outputs) == 0 {
+		return toolOutput{}, false
+	}
+	return m.outputs[len(m.outputs)-1], true
+}
+
 func (m *model) resizeModal() {
 	if m.modal != nil {
 		m.modal.SetSize(m.width, m.height)

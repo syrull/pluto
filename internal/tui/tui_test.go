@@ -642,7 +642,7 @@ func TestViewFooterReady(t *testing.T) {
 // tea.Quit for a clean shutdown — not a context-kill timeout.
 func TestProgramRunsHeadlessAndQuits(t *testing.T) {
 	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "")
-	m := model{agent: ag, md: newRenderer(80), input: newInput(80)}
+	m := model{agent: ag, md: newRenderer(80), input: newInput(80), mouse: true}
 
 	var in, out bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -686,5 +686,29 @@ func TestProgramRunsHeadlessAndQuits(t *testing.T) {
 	}
 	if strings.TrimSpace(v.Content) == "" {
 		t.Errorf("View().Content empty; rendered output was:\n%s", out.String())
+	}
+}
+
+func TestMouseModeDefaultsOffAndOptsIn(t *testing.T) {
+	mouseModeFor := func(mouse bool) tea.MouseMode {
+		var tm tea.Model = model{md: newRenderer(80), input: newInput(80), mouse: mouse}
+		tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		return tm.(model).View().MouseMode
+	}
+	if got := mouseModeFor(false); got != tea.MouseModeNone {
+		t.Fatalf("default View().MouseMode = %v, want MouseModeNone so selection works", got)
+	}
+	if got := mouseModeFor(true); got != tea.MouseModeCellMotion {
+		t.Fatalf("mouse-enabled View().MouseMode = %v, want MouseModeCellMotion", got)
+	}
+}
+
+func TestMouseEnabledEnv(t *testing.T) {
+	cases := map[string]bool{"": false, "off": false, "0": false, "false": false, "NO": false, "on": true, "1": true, "true": true, "YES": true}
+	for val, want := range cases {
+		t.Setenv("PLUTO_MOUSE", val)
+		if got := mouseEnabled(); got != want {
+			t.Errorf("mouseEnabled() with PLUTO_MOUSE=%q = %v, want %v", val, got, want)
+		}
 	}
 }

@@ -79,6 +79,30 @@ func TestClickOpensModalAndEscCloses(t *testing.T) {
 	}
 }
 
+func TestCtrlOOpensLatestOutputModal(t *testing.T) {
+	var tm tea.Model = model{md: newRenderer(80)}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(eventMsg{Kind: "tool_call", Tool: "bash", Text: `{"command":"seq 30"}`})
+	tm, _ = tm.Update(eventMsg{Kind: "tool_result", Tool: "bash", Text: strings.Repeat("out\n", 30)})
+
+	if tm.(model).modal != nil {
+		t.Fatal("precondition: modal should be closed")
+	}
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if tm.(model).modal == nil {
+		t.Fatal("ctrl+o should open the latest tool output modal without a mouse")
+	}
+}
+
+func TestCtrlONoopWithoutOutput(t *testing.T) {
+	var tm tea.Model = model{md: newRenderer(80)}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if tm.(model).modal != nil {
+		t.Fatal("ctrl+o with no retained output should not open a modal")
+	}
+}
+
 func TestModalWheelScrolls(t *testing.T) {
 	var tm tea.Model = model{md: newRenderer(80)}
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})

@@ -244,6 +244,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.vp, cmd = m.vp.Update(msg)
 			return m, cmd
+		case "ctrl+o":
+			if o, ok := m.lastOutput(); ok {
+				m.openModal(o)
+			}
+			return m, nil
 		case "alt+enter":
 			m.input.InsertRune('\n')
 			return m, nil

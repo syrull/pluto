@@ -37,7 +37,7 @@ type LoginHook struct {
 }
 
 // entry is one committed transcript block, optionally tied to a retained tool
-// output (outputID > 0) so a click can reopen its full text in a modal.
+// output (outputID > 0) so a click or ctrl+o can reopen its full text in a modal.
 type entry struct {
 	text     string
 	outputID int
@@ -56,6 +56,10 @@ type model struct {
 
 	vp    viewport.Model
 	ready bool
+
+	// mouse enables mouse capture (wheel scroll, click-to-open). Off by default so
+	// the terminal keeps native text selection; PLUTO_MOUSE=on enables it.
+	mouse bool
 
 	// Streaming accumulators: strings because Bubbletea copies the model by value and Builder panics when copied.
 	streamText  string
@@ -115,7 +119,7 @@ func newInput(width int) textarea.Model {
 
 // New builds the Bubbletea program.
 func New(a *agent.Agent, login *LoginHook) *tea.Program {
-	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80)}
+	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80), mouse: mouseEnabled()}
 	return tea.NewProgram(m)
 }
 
