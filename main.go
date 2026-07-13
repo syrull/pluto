@@ -18,7 +18,12 @@ import (
 	"github.com/syrull/pluto/internal/tool"
 	"github.com/syrull/pluto/internal/tools"
 	"github.com/syrull/pluto/internal/tui"
+	"github.com/syrull/pluto/internal/update"
 )
+
+// version is the build version, injected via -ldflags at release time and
+// left as "dev" for local builds.
+var version = "dev"
 
 // systemPromptBase is the static guidance prepended to the dynamically
 // generated tool listing built from the registry (see buildSystemPrompt).
@@ -67,6 +72,20 @@ func buildSystemPrompt(reg *tool.Registry) string {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "update":
+			if err := update.Run(version); err != nil {
+				fmt.Fprintln(os.Stderr, "pluto:", err)
+				os.Exit(1)
+			}
+			return
+		case "version", "-v", "--version":
+			fmt.Println("pluto", version)
+			return
+		}
+	}
+
 	if path, err := debug.Init(); err != nil {
 		fmt.Fprintln(os.Stderr, "pluto: debug logging disabled:", err)
 	} else if path != "" {

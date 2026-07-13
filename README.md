@@ -9,3 +9,28 @@ Codex is probably the only one that I like in terms of code quality and usefulne
 I wanted a simple thing with the features that I use and like from other AI harnesses, and I wanted to write it in a language that I "know", or at least make my best effort to learn.
 
 Anyway, it's also a fun project for creating agents.
+
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/syrull/pluto/main/install.sh | sh
+```
+
+This downloads the latest release binary for your OS/arch into `~/.local/bin`
+(override with `PLUTO_INSTALL_DIR`). Make sure that directory is on your `PATH`.
+
+## Update
+
+Pluto updates itself in place to the latest release:
+
+```sh
+pluto update
+```
+
+Check the current version with `pluto version`.
+
+## Releases
+
+Releases are published automatically from `main`. Every push bumps the patch
+version (starting at `v0.0.1`) and creates a tagged GitHub release with
+prebuilt binaries. Add `[skip release]` to a commit message to skip it.

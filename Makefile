@@ -1,11 +1,13 @@
 BINARY := pluto
+VERSION ?= dev
+LDFLAGS := -X main.version=$(VERSION)
 
 .PHONY: all build run test vet fmt fmt-check tidy clean
 
 all: fmt-check vet test build
 
 build:
-	go build -o bin/$(BINARY) .
+	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) .
 
 run:
 	go run .
