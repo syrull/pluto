@@ -135,8 +135,8 @@ func TestTypingDismissesDashboard(t *testing.T) {
 	if got.showHome {
 		t.Fatal("typing should dismiss the dashboard")
 	}
-	if strings.Contains(got.content(), "↑/↓ move") {
-		t.Fatalf("dashboard should be gone after typing:\n%s", got.content())
+	if strings.Contains(got.content(), "directory") {
+		t.Fatalf("dashboard should be gone from the conversation pane after typing:\n%s", got.content())
 	}
 }
 
@@ -152,12 +152,12 @@ func TestDashCommandReopensDashboard(t *testing.T) {
 	}
 }
 
-func TestHomeBodyClipsToHeight(t *testing.T) {
+func TestMainAreaClipsToHeight(t *testing.T) {
 	m := newDashModel()
-	m.height = 10 // avail = 10 - footerHeight
-	lines := strings.Count(m.homeBody(), "\n") + 1
+	m.height = 10 // main row = 10 - footerHeight
+	lines := strings.Count(m.mainArea(), "\n") + 1
 	if want := m.height - footerHeight; lines > want {
-		t.Fatalf("homeBody = %d lines, want <= %d", lines, want)
+		t.Fatalf("mainArea = %d lines, want <= %d", lines, want)
 	}
 }
 

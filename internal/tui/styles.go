@@ -47,7 +47,9 @@ var (
 	styleTreeBoxFocus = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("6"))
-	styleTreeCursor = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	styleTreeDir    = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
-	styleTreeFile   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	styleTreeBorder      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	styleTreeBorderFocus = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	styleTreeCursor      = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleTreeDir         = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
+	styleTreeFile        = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 )

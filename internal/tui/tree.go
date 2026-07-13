@@ -22,6 +22,10 @@ const (
 	// maxFileView caps the bytes shown when a file has no diff and its contents
 	// are displayed instead.
 	maxFileView = 200_000
+	// convContentTop is the number of rows above the conversation viewport inside
+	// its pane (the top border, which carries the title), used to map a screen row
+	// to a transcript line.
+	convContentTop = 1
 )
 
 func treeStyle() widgets.TreeStyle {
@@ -165,49 +169,82 @@ func (m *model) activePane() *widgets.Tree {
 	return m.tree
 }
 
-// homeKey handles keys while the dashboard is shown: switching/navigating the
-// sidebar panes, opening a file's diff, or dismissing the dashboard. It reports
-// whether it consumed the key so unclaimed keys fall through to normal handling.
-func (m *model) homeKey(ks string) (bool, tea.Cmd) {
-	pane := m.activePane()
+// focusOrder returns the panes Tab cycles through, skipping Changes when clean.
+func (m *model) focusOrder() []focusPane {
+	order := []focusPane{paneChat, paneTree}
+	if m.changes != nil {
+		order = append(order, paneChanges)
+	}
+	return order
+}
+
+// cycleFocus moves keyboard focus to the next (or previous) pane.
+func (m *model) cycleFocus(back bool) {
+	order := m.focusOrder()
+	idx := 0
+	for i, p := range order {
+		if p == m.focus {
+			idx = i
+			break
+		}
+	}
+	if back {
+		idx = (idx - 1 + len(order)) % len(order)
+	} else {
+		idx = (idx + 1) % len(order)
+	}
+	m.focus = order[idx]
+}
+
+// paneKey handles pane switching and, when a sidebar pane holds focus, its
+// navigation: moving the cursor, expanding/collapsing, or opening a file's diff.
+// It reports whether it consumed the key so unclaimed keys fall through to the
+// chat/input handling.
+func (m *model) paneKey(ks string) (bool, tea.Cmd) {
 	switch ks {
 	case "tab":
-		if m.changes != nil {
-			if m.focus == paneTree {
-				m.focus = paneChanges
-			} else {
-				m.focus = paneTree
-			}
-		}
+		m.cycleFocus(false)
+		return true, nil
+	case "shift+tab":
+		m.cycleFocus(true)
+		return true, nil
+	}
+	if m.focus != paneTree && m.focus != paneChanges {
+		return false, nil
+	}
+	p := m.activePane()
+	switch ks {
 	case "up":
-		if pane != nil {
-			pane.Up()
+		if p != nil {
+			p.Up()
 		}
 	case "down":
-		if pane != nil {
-			pane.Down()
+		if p != nil {
+			p.Down()
 		}
 	case "left":
-		if pane != nil {
-			pane.Collapse()
+		if p != nil {
+			p.Collapse()
 		}
 	case "right":
-		if pane != nil {
-			pane.Expand()
+		if p != nil {
+			p.Expand()
 		}
 	case "enter":
-		if pane != nil {
-			if n, ok := pane.Selected(); ok {
+		if p != nil {
+			if n, ok := p.Selected(); ok {
 				if n.IsDir {
-					pane.Toggle()
+					p.Toggle()
 				} else {
 					m.openFileDiff(n.Path)
 				}
 			}
 		}
 	case "esc":
-		m.showHome = false
+		m.focus = paneChat
 	default:
+		// Any other key (typing, ctrl+*) returns to the chat pane and is handled there.
+		m.focus = paneChat
 		return false, nil
 	}
 	return true, nil
@@ -279,21 +316,119 @@ func colorDiffLine(ln string) string {
 	}
 }
 
-// homeBody lays out the launch screen: a full-height file-tree sidebar on the
-// left and the dashboard centered in the remaining width.
-func (m model) homeBody() string {
-	mainH := m.height - footerHeight
-	if mainH < 1 {
-		mainH = 1
+// mainHeight is the height of the main row (conversation + sidebar), i.e. the
+// screen minus the footer pane.
+func (m model) mainHeight() int {
+	h := m.height - footerHeight
+	if h < 1 {
+		h = 1
 	}
+	return h
+}
+
+// convOuterWidth is the total width of the conversation pane (borders included),
+// the terminal width minus the sidebar and a one-cell gap.
+func (m model) convOuterWidth() int {
+	if m.width <= 0 {
+		return defaultWrapWidth
+	}
+	w := m.width - m.sidebarWidth() - 1
+	if w < 24 {
+		w = 24
+	}
+	return w
+}
+
+// contentWidth is the interior width transcript content wraps to inside the
+// conversation pane (outer width minus the border).
+func (m model) contentWidth() int {
+	w := m.convOuterWidth() - 2
+	if w < 10 {
+		w = 10
+	}
+	return w
+}
+
+// convBodyHeight is the interior height of the conversation pane's viewport
+// (main height minus the top and bottom border).
+func (m model) convBodyHeight() int {
+	h := m.mainHeight() - 2
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// mainArea lays out the persistent main row: the conversation pane on the left
+// and the file-tree/changes sidebar on the right, clipped to the main height so
+// it never crowds the footer.
+func (m model) mainArea() string {
+	mainH := m.mainHeight()
 	sidebar := m.sidebarView(mainH)
-	rightW := m.width - lipgloss.Width(sidebar) - 1
-	if rightW < 20 {
-		rightW = 20
+	convW := m.width - lipgloss.Width(sidebar) - 1
+	if convW < 24 {
+		convW = 24
 	}
-	dash := clipLines(m.dashboardView(rightW), mainH)
-	right := lipgloss.Place(rightW, mainH, lipgloss.Center, lipgloss.Center, dash)
-	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", right)
+	conv := m.conversationPane(convW, mainH)
+	joined := lipgloss.JoinHorizontal(lipgloss.Top, conv, " ", sidebar)
+	return clipLines(joined, mainH)
+}
+
+// conversationPane renders the transcript (or the launch dashboard while at
+// home) inside a box whose top border carries the title, highlighting the
+// border when the chat pane holds focus.
+func (m model) conversationPane(w, h int) string {
+	bodyH := h - 2 // top + bottom border
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	title := "Conversation"
+	var body string
+	switch {
+	case m.showHome:
+		title = "Pluto"
+		body = clipLines(m.dashboardView(w-2), bodyH)
+	case m.ready:
+		body = m.vp.View()
+	default:
+		body = clipLines(m.transcript(), bodyH)
+	}
+	return titledBox(w, h, title, body, m.focus == paneChat)
+}
+
+// titledBox renders body inside a rounded box whose top border carries the
+// title (e.g. "╭──── Conversation ────╮"), highlighting the border when focused.
+func titledBox(w, h int, title, body string, focused bool) string {
+	boxStyle, borderStyle := styleTreeBox, styleTreeBorder
+	if focused {
+		boxStyle, borderStyle = styleTreeBoxFocus, styleTreeBorderFocus
+	}
+	lines := strings.Split(boxStyle.Width(w).Height(h).Render(body), "\n")
+	if len(lines) > 0 {
+		lines[0] = borderTitle(w, title, borderStyle)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// borderTitle builds a rounded top border of total width w with the title
+// centered in it, falling back to a plain border when the title can't fit.
+func borderTitle(w int, title string, borderStyle lipgloss.Style) string {
+	inner := w - 2 // span between the corners
+	if inner < 0 {
+		inner = 0
+	}
+	label := ""
+	if title != "" {
+		label = " " + title + " "
+	}
+	if lipgloss.Width(label) > inner {
+		label = ""
+	}
+	left := (inner - lipgloss.Width(label)) / 2
+	right := inner - lipgloss.Width(label) - left
+	return borderStyle.Render("╭"+strings.Repeat("─", left)) +
+		styleDiffHdr.Render(label) +
+		borderStyle.Render(strings.Repeat("─", right)+"╮")
 }
 
 func (m model) sidebarWidth() int {
@@ -329,7 +464,7 @@ func (m model) sidebarView(height int) string {
 	var panes string
 	if m.changes == nil {
 		panes = m.paneView(sw, content, avail, "Files", m.tree, m.focus == paneTree)
-		hintText = "↑/↓ move · → open · ↵ diff"
+		hintText = "tab pane · ↑/↓ move · ↵ diff"
 	} else {
 		changesH := avail / 3
 		if changesH < 5 {
@@ -345,16 +480,17 @@ func (m model) sidebarView(height int) string {
 		files := m.paneView(sw, content, filesH, "Files", m.tree, m.focus == paneTree)
 		changes := m.paneView(sw, content, changesH, "Changes", m.changes, m.focus == paneChanges)
 		panes = files + "\n" + changes
-		hintText = "↑/↓ move · tab pane · ↵ diff"
+		hintText = "tab pane · ↑/↓ move · ↵ diff"
 	}
 	hint := lipgloss.NewStyle().MaxWidth(sw).Render(styleHint.Render(hintText))
 	return panes + "\n" + hint
 }
 
-// paneView renders one bordered, titled pane of total height boxH, giving the
-// tree the interior dimensions and highlighting the border when focused.
+// paneView renders one titled pane of total height boxH, giving the tree the
+// interior dimensions and highlighting the border when focused. The title is
+// carried in the top border.
 func (m model) paneView(sw, content, boxH int, title string, t *widgets.Tree, focused bool) string {
-	treeH := boxH - 3 // borders (2) + title (1)
+	treeH := boxH - 2 // top + bottom border
 	if treeH < 1 {
 		treeH = 1
 	}
@@ -363,11 +499,7 @@ func (m model) paneView(sw, content, boxH int, title string, t *widgets.Tree, fo
 		t.SetSize(content, treeH)
 		body = t.View()
 	}
-	style := styleTreeBox
-	if focused {
-		style = styleTreeBoxFocus
-	}
-	return style.Width(sw).Height(boxH).Render(styleDiffHdr.Render(title) + "\n" + body)
+	return titledBox(sw, boxH, title, body, focused)
 }
 
 func clipLines(s string, n int) string {

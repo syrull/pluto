@@ -25,7 +25,7 @@ func modalStyle() widgets.ModalStyle {
 // when there is more to show than the inline preview, marking the block with a
 // [Show] affordance.
 func (m *model) appendToolResult(ev agent.Event) {
-	text := renderToolResult(m.width, ev.Tool, ev.Text)
+	text := renderToolResult(m.contentWidth(), ev.Tool, ev.Text)
 	id := 0
 	if o, ok := m.retainedOutput(ev); ok {
 		m.outputs = append(m.outputs, o)
@@ -102,6 +102,7 @@ func (m *model) resizeModal() {
 // outputAtScreen maps a screen row to the retained output of the transcript
 // block under it, if that block has one.
 func (m model) outputAtScreen(y int) (toolOutput, bool) {
+	y -= convContentTop
 	if !m.ready || y < 0 || y >= m.vp.Height() {
 		return toolOutput{}, false
 	}

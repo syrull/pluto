@@ -273,26 +273,27 @@ func transcriptAfterTool(t *testing.T, mouse bool, tool, args, result string) st
 	return tm.(model).transcript()
 }
 
-// clickableRow returns the first transcript content row carrying a retained
-// output, assuming the viewport is at the top.
+// clickableRow returns the screen row carrying the first retained output,
+// assuming the viewport is at the top (content rows sit below the pane's border
+// and title, so convContentTop is added).
 func clickableRow(m model) int {
 	cur := 0
 	for _, e := range m.lines {
 		if e.outputID > 0 {
-			return cur
+			return cur + convContentTop
 		}
 		cur += strings.Count(e.text, "\n") + 1
 	}
 	return -1
 }
 
-// copyableRow returns the first transcript content row carrying a retained code
-// block, assuming the viewport is at the top.
+// copyableRow returns the screen row carrying the first retained code block,
+// assuming the viewport is at the top.
 func copyableRow(m model) int {
 	cur := 0
 	for _, e := range m.lines {
 		if e.copyID > 0 {
-			return cur
+			return cur + convContentTop
 		}
 		cur += strings.Count(e.text, "\n") + 1
 	}

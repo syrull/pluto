@@ -137,6 +137,7 @@ func (m model) lastCode() (codeBlock, bool) {
 // codeAtScreen maps a screen row to the code block whose copy affordance is
 // under it, if any.
 func (m model) codeAtScreen(y int) (codeBlock, bool) {
+	y -= convContentTop
 	if !m.ready || y < 0 || y >= m.vp.Height() {
 		return codeBlock{}, false
 	}

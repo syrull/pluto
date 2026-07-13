@@ -57,10 +57,7 @@ func (m *model) renderMarkdown(src string) string {
 // renderUserLine wraps a user message to the viewport width, indenting
 // continuation lines under the prompt so multi-line input doesn't run off screen.
 func (m *model) renderUserLine(in string) string {
-	w := m.width
-	if w <= 0 {
-		w = 80
-	}
+	w := m.contentWidth()
 	const prefix = "› "
 	w -= len(prefix)
 	if w < 10 {
@@ -156,18 +153,11 @@ func (m *model) copyAffordance(b codeBlock) string {
 	} else {
 		btn = styleHint.Render("[ctrl+y] copy " + b.title())
 	}
-	w := m.width
-	if w <= 0 {
-		w = defaultWrapWidth
-	}
-	return lipgloss.PlaceHorizontal(w, lipgloss.Right, btn)
+	return lipgloss.PlaceHorizontal(m.contentWidth(), lipgloss.Right, btn)
 }
 
 func (m *model) thinkBoxWidth() int {
-	w := m.width
-	if w <= 0 {
-		w = 80
-	}
+	w := m.contentWidth()
 	w -= 4
 	if w < 10 {
 		w = 10
@@ -202,8 +192,8 @@ func mouseEnabled() bool {
 	return false
 }
 
-// content renders the screen body: the modal when open, otherwise the transcript
-// viewport above the notifications widget, status line, and input footer.
+// content renders the screen body: a modal/picker when open, otherwise the main
+// row (conversation pane plus file-tree/changes sidebar) above the footer pane.
 func (m model) content() string {
 	if m.modal != nil && m.ready {
 		return m.modal.View()
@@ -211,14 +201,28 @@ func (m model) content() string {
 	if m.picker != nil && m.ready {
 		return m.picker.View()
 	}
-	footer := m.notifications() + "\n" + m.modelStatus() + "\n" + m.footer()
-	if m.showHome {
-		return m.homeBody() + "\n" + footer
+	return m.mainArea() + "\n" + m.footerPane()
+}
+
+// footerPane renders the footer: a transient notice line above a bordered box
+// holding the status line and the input box, giving them a clear separation from
+// the panes above. The border is highlighted while the chat pane holds focus.
+func (m model) footerPane() string {
+	w := m.width
+	if w <= 0 {
+		w = defaultWrapWidth
 	}
-	if !m.ready {
-		return m.transcript() + "\n\n" + footer
+	inW := w - 2
+	if inW < 10 {
+		inW = 10
 	}
-	return m.vp.View() + "\n" + footer
+	status := lipgloss.NewStyle().MaxWidth(inW).Render(m.modelStatus())
+	box := styleTreeBox
+	if m.focus == paneChat {
+		box = styleTreeBoxFocus
+	}
+	pane := box.Width(w).Render(status + "\n" + m.footer())
+	return m.notifications() + "\n" + pane
 }
 
 // notifications renders the notifications widget shown directly above the status

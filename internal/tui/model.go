@@ -110,17 +110,20 @@ type model struct {
 
 	// tree is the sidebar file explorer; changes is the second pane listing only
 	// modified/created files (nil when the tree is clean); focus selects which
-	// pane the arrow keys drive.
+	// pane the keyboard drives.
 	tree    *widgets.Tree
 	changes *widgets.Tree
-	focus   sidebarPane
+	focus   focusPane
 }
 
-// sidebarPane identifies which home-screen pane has keyboard focus.
-type sidebarPane int
+// focusPane identifies which pane currently has keyboard focus. Tab cycles
+// through them; paneChat routes typing to the input and scrolls the transcript,
+// while paneTree/paneChanges drive the sidebar.
+type focusPane int
 
 const (
-	paneTree sidebarPane = iota
+	paneChat focusPane = iota
+	paneTree
 	paneChanges
 )
 
@@ -138,7 +141,10 @@ const (
 // input scrolls within it rather than growing the box.
 const inputHeight = 3
 
-const footerHeight = 2 + inputHeight
+// footerHeight is the fixed height of the footer pane: a notice line above a
+// bordered box holding the status line and the input box (border + status +
+// inputHeight).
+const footerHeight = 1 + 2 + 1 + inputHeight
 
 // newInput builds a word-wrapping, multi-line input box.
 func newInput(width int) textarea.Model {

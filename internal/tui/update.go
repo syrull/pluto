@@ -225,20 +225,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.md = newRenderer(msg.Width)
-		h := msg.Height - footerHeight
-		if h < 1 {
-			h = 1
+		cw := m.contentWidth()
+		ch := m.convBodyHeight()
+		m.md = newRenderer(cw)
+		inW := msg.Width - 2 // footer box interior (border)
+		if inW < 10 {
+			inW = 10
 		}
 		if !m.ready {
-			m.vp = viewport.New(viewport.WithWidth(msg.Width), viewport.WithHeight(h))
+			m.vp = viewport.New(viewport.WithWidth(cw), viewport.WithHeight(ch))
 			m.vp.KeyMap = scrollKeymap()
-			m.input = newInput(msg.Width)
+			m.input = newInput(inW)
 			m.ready = true
 		} else {
-			m.vp.SetWidth(msg.Width)
-			m.vp.SetHeight(h)
-			m.input.SetWidth(msg.Width)
+			m.vp.SetWidth(cw)
+			m.vp.SetHeight(ch)
+			m.input.SetWidth(inW)
 		}
 		if m.tree == nil {
 			m.tree = newFileTree()
@@ -295,12 +297,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		// While the dashboard is up, arrows/enter drive the file tree; unclaimed
-		// keys (typing, ctrl+*) fall through and dismiss it as before.
-		if m.showHome {
-			if done, cmd := m.homeKey(ks); done {
-				return m, cmd
-			}
+		// Tab cycles pane focus; while a sidebar pane holds focus, arrows/enter
+		// drive it. Unclaimed keys (typing, ctrl+*) fall through to chat handling.
+		if done, cmd := m.paneKey(ks); done {
+			return m, cmd
 		}
 		switch ks {
 		case "ctrl+c":
@@ -381,6 +381,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case eventMsg:
 		ev := agent.Event(msg)
+		var extra tea.Cmd
 		switch ev.Kind {
 		case "text_delta":
 			m.streamText += ev.Text
@@ -388,18 +389,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamThink += ev.Text
 		case "tool_review":
 			m.flushStream()
-			m.pushText(renderToolReview(m.width, ev.Text))
+			m.pushText(renderToolReview(m.contentWidth(), ev.Text))
 		case "tool_call":
 			m.flushStream()
 			m.pendingTool = ev.Tool
 			m.pendingArgs = ev.Text
-			m.pushText(renderToolCall(m.width, ev.Tool, ev.Text))
+			m.pushText(renderToolCall(m.contentWidth(), ev.Tool, ev.Text))
 		case "tool_result":
+			// Refresh the sidebar so file mutations show up live in the tree/changes.
+			if ev.Tool == "write" || ev.Tool == "edit" {
+				extra = gatherGitCmd
+			}
 			m.appendToolResult(ev)
 		default:
-			m.pushText(renderEvent(m.width, ev))
+			m.pushText(renderEvent(m.contentWidth(), ev))
 		}
 		m.syncViewport()
+		if extra != nil {
+			return m, tea.Batch(listen(m.events), extra)
+		}
 		return m, listen(m.events)
 
 	case doneMsg:
@@ -413,10 +421,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.busy = true
 			cmd := m.runAgent(strings.Join(pending, "\n\n"))
 			m.syncViewport()
-			return m, cmd
+			return m, tea.Batch(cmd, gatherGitCmd)
 		}
 		m.syncViewport()
-		return m, nil
+		// Refresh the sidebar to reflect any files the turn changed.
+		return m, gatherGitCmd
 	case loginDoneMsg:
 		m.busy = false
 		m.loginFlow = nil
@@ -434,15 +443,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tree.SetStatus(m.buildStatusStyles())
 		}
 		m.changes = m.buildChangesList()
-		if m.changes == nil {
+		if m.changes == nil && m.focus == paneChanges {
 			m.focus = paneTree
 		}
 		return m, nil
 	case editorDoneMsg:
 		// The editor may have changed the file; refresh a still-open file/diff
-		// modal so it reflects the edit.
+		// modal so it reflects the edit, and refresh the sidebar.
 		if msg.err == nil && m.modal != nil && m.modalIsFile && m.modalPath != "" {
 			m.openFileDiff(m.modalPath)
+		}
+		if msg.err == nil {
+			return m, gatherGitCmd
 		}
 		return m, nil
 	}

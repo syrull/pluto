@@ -181,12 +181,12 @@ func TestWindowSizeFirstSetReady(t *testing.T) {
 	if !got.ready {
 		t.Fatalf("expected ready=true after first WindowSizeMsg, got false")
 	}
-	wantHeight := 6 - footerHeight
-	if got.vp.Height() != wantHeight {
+	// The viewport now sizes to the conversation pane's interior, not the full screen.
+	if wantHeight := got.convBodyHeight(); got.vp.Height() != wantHeight {
 		t.Fatalf("vp.Height = %d, want %d", got.vp.Height(), wantHeight)
 	}
-	if got.vp.Width() != 40 {
-		t.Fatalf("vp.Width = %d, want 40", got.vp.Width())
+	if wantWidth := got.contentWidth(); got.vp.Width() != wantWidth {
+		t.Fatalf("vp.Width = %d, want %d", got.vp.Width(), wantWidth)
 	}
 }
 
@@ -224,12 +224,11 @@ func TestWindowSizeResize(t *testing.T) {
 	if !second.ready {
 		t.Fatalf("ready should stay true after second WindowSizeMsg, got false")
 	}
-	wantHeight := 10 - footerHeight
-	if second.vp.Height() != wantHeight {
+	if wantHeight := second.convBodyHeight(); second.vp.Height() != wantHeight {
 		t.Fatalf("vp.Height = %d, want %d", second.vp.Height(), wantHeight)
 	}
-	if second.vp.Width() != 50 {
-		t.Fatalf("vp.Width = %d, want 50", second.vp.Width())
+	if wantWidth := second.contentWidth(); second.vp.Width() != wantWidth {
+		t.Fatalf("vp.Width = %d, want %d", second.vp.Width(), wantWidth)
 	}
 }
 

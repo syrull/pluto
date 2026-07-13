@@ -129,10 +129,15 @@ func TestHomeArrowsDriveTreeWithoutDismissing(t *testing.T) {
 	}
 	start, _ := got.tree.Selected()
 
+	// Tab moves focus from the chat pane to the file tree, then arrows drive it.
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if got := tm.(model); got.focus != paneTree {
+		t.Fatalf("tab should focus the tree pane, got focus %d", got.focus)
+	}
 	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	got = tm.(model)
 	if !got.showHome {
-		t.Fatal("arrow keys should not dismiss the dashboard")
+		t.Fatal("navigating panes should not dismiss the dashboard")
 	}
 	moved, _ := got.tree.Selected()
 	if start != nil && moved != nil && start.Path == moved.Path {

@@ -132,7 +132,7 @@ func (m *model) rebuildFromMessages(msgs []llm.Message) {
 			}
 			for _, c := range msg.ToolCalls {
 				calls[c.ID] = c
-				m.pushText(renderToolCall(m.width, c.Name, string(c.Args)))
+				m.pushText(renderToolCall(m.contentWidth(), c.Name, string(c.Args)))
 			}
 		case llm.RoleTool:
 			if c, ok := calls[msg.ToolCallID]; ok {
