@@ -13,7 +13,7 @@ Anyway, it's also a fun project for creating agents.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/syrull/pluto/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/syrull/pluto/refs/heads/main/install.sh | sh
 ```
 
 This downloads the latest release binary for your OS/arch into `~/.local/bin`

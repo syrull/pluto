@@ -21,11 +21,21 @@ esac
 asset="pluto_${os}_${arch}"
 url="https://github.com/${REPO}/releases/latest/download/${asset}"
 
+if command -v curl >/dev/null 2>&1; then
+	download() { curl -fsSL "$1" -o "$2"; }
+elif command -v wget >/dev/null 2>&1; then
+	download() { wget -qO "$2" "$1"; }
+else
+	echo "pluto: need curl or wget to download" >&2
+	exit 1
+fi
+
 echo "pluto: downloading ${asset}..."
 mkdir -p "$INSTALL_DIR"
 tmp="$(mktemp)"
-curl -fsSL "$url" -o "$tmp"
-chmod +x "$tmp"
+trap 'rm -f "$tmp"' EXIT
+download "$url" "$tmp"
+chmod 0755 "$tmp"
 mv "$tmp" "$INSTALL_DIR/$BIN"
 
 echo "pluto: installed to $INSTALL_DIR/$BIN"
