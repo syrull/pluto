@@ -117,6 +117,35 @@ func (a *Agent) Reset() {
 	}
 }
 
+// Snapshot returns a copy of the running transcript, safe for the caller to
+// persist or inspect without racing the agent's own mutations.
+func (a *Agent) Snapshot() []llm.Message {
+	out := make([]llm.Message, len(a.transcript))
+	copy(out, a.transcript)
+	return out
+}
+
+// Load replaces the transcript with a previously saved one so the conversation
+// can be resumed. Saved system messages are dropped and the agent's current
+// system prompt is reinstated (so the fresh tool listing and project context
+// ride along), then the transcript is trimmed to the context budget so a large
+// restored history is bounded on the next turn.
+func (a *Agent) Load(msgs []llm.Message) {
+	a.lastUsage = llm.Usage{}
+	a.TakeSteering()
+	a.transcript = nil
+	if a.systemPrompt != "" {
+		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemPrompt})
+	}
+	for _, m := range msgs {
+		if m.Role == llm.RoleSystem {
+			continue
+		}
+		a.transcript = append(a.transcript, m)
+	}
+	a.trimTranscript()
+}
+
 // Steer queues a user message to fold into a running turn at the next step
 // boundary, letting the user redirect the agent mid-task. It is safe to call
 // concurrently with Run; a message sent while Run is idle is picked up by the

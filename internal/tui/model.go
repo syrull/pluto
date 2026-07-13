@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/glamour"
 
 	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
@@ -87,6 +88,12 @@ type model struct {
 	// mouse event.
 	codeBlocks []codeBlock
 	notice     string
+
+	// store persists conversations, opened lazily on first /save or /resume;
+	// sessionName is the id of the active saved conversation, for resave and
+	// autosave.
+	store       *session.Store
+	sessionName string
 }
 
 // pickerKind identifies which setting an open ListPicker edits.
@@ -96,6 +103,7 @@ const (
 	pickerNone pickerKind = iota
 	pickerModel
 	pickerThink
+	pickerResume
 )
 
 // inputHeight is the fixed number of visible rows in the input box; longer
