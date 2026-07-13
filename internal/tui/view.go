@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
 	"golang.org/x/term"
@@ -128,23 +129,38 @@ func (m *model) flushStream() {
 	}
 }
 
-// pushMarkdown commits assistant markdown and retains each fenced code block it
-// contains behind a copy affordance.
+// pushMarkdown commits assistant markdown, rendering each fenced code block with
+// its own copy affordance interleaved right after it rather than pooling every
+// button at the end of the response.
 func (m *model) pushMarkdown(text string) {
-	m.pushText(m.renderMarkdown(text))
-	for _, b := range extractCodeBlocks(text) {
-		m.codeBlocks = append(m.codeBlocks, b)
-		m.lines = append(m.lines, entry{text: m.copyAffordance(b), copyID: len(m.codeBlocks)})
+	for _, seg := range splitMarkdown(text) {
+		rendered := m.renderMarkdown(seg.raw)
+		if !seg.isCode {
+			if strings.TrimSpace(rendered) != "" {
+				m.pushText(rendered)
+			}
+			continue
+		}
+		m.pushText(rendered)
+		m.codeBlocks = append(m.codeBlocks, seg.code)
+		m.lines = append(m.lines, entry{text: m.copyAffordance(seg.code), copyID: len(m.codeBlocks)})
 	}
 }
 
-// copyAffordance renders the marker for a retained code block: a clickable
-// button when the mouse is captured, otherwise the keyboard hint that copies it.
+// copyAffordance renders a code block's copy marker right-aligned beneath the
+// block: a clickable button when the mouse is captured, otherwise the ctrl+y hint.
 func (m *model) copyAffordance(b codeBlock) string {
+	var btn string
 	if m.mouse {
-		return "  " + styleCopyBtn.Render(" Copy "+b.title()+" ▸ ")
+		btn = styleCopyBtn.Render(" Copy " + b.title() + " ▸ ")
+	} else {
+		btn = styleHint.Render("[ctrl+y] copy " + b.title())
 	}
-	return "  " + styleHint.Render("[ctrl+y] copy "+b.title())
+	w := m.width
+	if w <= 0 {
+		w = defaultWrapWidth
+	}
+	return lipgloss.PlaceHorizontal(w, lipgloss.Right, btn)
 }
 
 func (m *model) thinkBoxWidth() int {
@@ -186,20 +202,36 @@ func mouseEnabled() bool {
 	return false
 }
 
-// content renders the screen body: the modal when open, otherwise the
-// transcript viewport above the status line and input footer.
+// content renders the screen body: the modal when open, otherwise the transcript
+// viewport above the notifications widget, status line, and input footer.
 func (m model) content() string {
 	if m.modal != nil && m.ready {
 		return m.modal.View()
 	}
-	footer := m.modelStatus() + "\n" + m.footer()
+	body := m.footer()
 	if m.picker != nil {
-		footer = m.modelStatus() + "\n" + m.picker.View()
+		body = m.picker.View()
 	}
+	footer := m.notifications() + "\n" + m.modelStatus() + "\n" + body
 	if !m.ready {
 		return m.transcript() + "\n\n" + footer
 	}
 	return m.vp.View() + "\n" + footer
+}
+
+// notifications renders the notifications widget shown directly above the status
+// line: a single line carrying the latest transient notice, or blank when there
+// is none. Clipping to the viewport width keeps a long notice from wrapping and
+// pushing the status line and input off screen.
+func (m model) notifications() string {
+	if m.notice == "" {
+		return ""
+	}
+	w := m.width
+	if w <= 0 {
+		w = defaultWrapWidth
+	}
+	return styleHint.MaxWidth(w).Render(m.notice)
 }
 
 func (m model) modelStatus() string {
@@ -244,9 +276,6 @@ func (m model) modelStatus() string {
 		// The input stays live for steering, so the working state is surfaced
 		// here rather than by replacing the input box.
 		line = styleWorking.Render("● working…") + styleModelStatus.Render(" · "+status)
-	}
-	if m.notice != "" {
-		line += "  " + m.notice
 	}
 	return line
 }

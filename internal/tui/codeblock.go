@@ -17,33 +17,73 @@ func (b codeBlock) title() string {
 	return b.lang
 }
 
-// extractCodeBlocks returns the fenced code blocks in md, in order. A fence is a
-// run of 3+ backticks or tildes at the start of a trimmed line; the closing
-// fence must be at least as long, so blocks opened with 4+ backticks may contain
-// literal ``` lines. Blank blocks are skipped.
-func extractCodeBlocks(md string) []codeBlock {
-	var blocks []codeBlock
-	var buf []string
+// mdSegment is a run of assistant markdown: either prose or a single fenced code
+// block. code is set only when isCode is true; raw is the source to render, with
+// the fence lines kept for code segments so glamour styles them as a block.
+type mdSegment struct {
+	code   codeBlock
+	isCode bool
+	raw    string
+}
+
+// splitMarkdown splits md into ordered prose and code-block segments so each
+// fenced block can be rendered with its own copy affordance. A fence is a run of
+// 3+ backticks or tildes at the start of a trimmed line; the closing fence must
+// be at least as long, so blocks opened with 4+ backticks may contain literal
+// ``` lines. Blank blocks and blank prose runs are dropped.
+func splitMarkdown(md string) []mdSegment {
+	var segs []mdSegment
+	var prose, buf []string
+	var open string
 	var fenceChar byte
 	var fenceLen int
 	var lang string
 	in := false
+
+	flushProse := func() {
+		if s := strings.Join(prose, "\n"); strings.TrimSpace(s) != "" {
+			segs = append(segs, mdSegment{raw: s})
+		}
+		prose = nil
+	}
+
 	for _, ln := range strings.Split(md, "\n") {
 		t := strings.TrimSpace(ln)
 		if !in {
 			if ch, n, info, ok := openFence(t); ok {
-				in, fenceChar, fenceLen, lang, buf = true, ch, n, info, nil
+				flushProse()
+				in, fenceChar, fenceLen, lang, open, buf = true, ch, n, info, ln, nil
+				continue
 			}
+			prose = append(prose, ln)
 			continue
 		}
 		if isCloseFence(t, fenceChar, fenceLen) {
 			if code := strings.Join(buf, "\n"); strings.TrimSpace(code) != "" {
-				blocks = append(blocks, codeBlock{lang: lang, code: code})
+				raw := open + "\n" + code + "\n" + ln
+				segs = append(segs, mdSegment{code: codeBlock{lang: lang, code: code}, isCode: true, raw: raw})
 			}
 			in = false
 			continue
 		}
 		buf = append(buf, ln)
+	}
+	// An unterminated fence falls back to prose so its text is never dropped.
+	if in {
+		prose = append([]string{open}, buf...)
+		flushProse()
+	}
+	flushProse()
+	return segs
+}
+
+// extractCodeBlocks returns the fenced code blocks in md, in order.
+func extractCodeBlocks(md string) []codeBlock {
+	var blocks []codeBlock
+	for _, seg := range splitMarkdown(md) {
+		if seg.isCode {
+			blocks = append(blocks, seg.code)
+		}
 	}
 	return blocks
 }

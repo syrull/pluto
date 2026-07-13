@@ -44,12 +44,12 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.lines = nil
 		m.outputs = nil
 		m.codeBlocks = nil
-		m.notice = ""
 		m.pendingTool = ""
 		m.pendingArgs = ""
 		m.streamText = ""
 		m.streamThink = ""
-		return styleHint.Render("✓ started a new conversation"), nil
+		m.notice = "✓ started a new conversation"
+		return "", nil
 
 	case "/login":
 		if m.login == nil {
@@ -102,7 +102,8 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			return styleErr.Render(fmt.Sprintf("✗ unknown model %q — run /model to list", target)), nil
 		}
 		sw.SetModel(target)
-		return styleHint.Render("switched to " + m.agent.ProviderName()), nil
+		m.notice = "✓ switched to " + m.agent.ProviderName()
+		return "", nil
 
 	case "/think":
 		th, ok := m.agent.Thinker()
@@ -130,7 +131,8 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			target = lvl
 		}
 		th.SetThinkLevel(target)
-		return renderThinkStatus(th.ThinkLevel()), nil
+		m.notice = thinkNotice(th.ThinkLevel())
+		return "", nil
 
 	case "/auto":
 		ctrl, ok := m.agent.Auto()
@@ -143,10 +145,12 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		switch fields[1] {
 		case "on":
 			ctrl.SetAutoEnabled(true)
-			return renderAutoStatus(ctrl), nil
+			m.notice = "✓ auto mode on · judge " + ctrl.JudgeName()
+			return "", nil
 		case "off":
 			ctrl.SetAutoEnabled(false)
-			return styleHint.Render("✓ auto mode off — bash commands run without review"), nil
+			m.notice = "✓ auto mode off — bash commands run without review"
+			return "", nil
 		default:
 			return styleErr.Render("✗ usage: /auto [on|off]"), nil
 		}
@@ -171,11 +175,12 @@ func thinkLevelList(levels []llm.ThinkLevel) string {
 	return strings.Join(parts, "|")
 }
 
-func renderThinkStatus(level llm.ThinkLevel) string {
+// thinkNotice returns the transient notice text for a think level.
+func thinkNotice(level llm.ThinkLevel) string {
 	if !level.Thinking() {
-		return styleHint.Render("✓ extended thinking disabled")
+		return "✓ extended thinking disabled"
 	}
-	return styleHint.Render("✓ extended thinking: " + string(level))
+	return "✓ extended thinking: " + string(level)
 }
 
 // Update handles Bubbletea messages and returns the updated model and commands.
@@ -233,10 +238,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				kind := m.pickerKind
 				m.picker = nil
 				m.pickerKind = pickerNone
-				if status := m.applyPick(kind, target); status != "" {
-					m.pushText(status)
-					m.syncViewport()
-				}
+				m.applyPick(kind, target)
 			case "esc":
 				m.picker = nil
 				m.pickerKind = pickerNone
@@ -257,16 +259,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+y":
 			if b, ok := m.lastCode(); ok {
-				m.notice = styleHint.Render("✓ copied " + b.title() + " to clipboard")
+				m.notice = "✓ copied " + b.title() + " to clipboard"
 				return m, tea.SetClipboard(b.code)
 			}
 			return m, nil
 		case "ctrl+t":
 			m.mouse = !m.mouse
 			if m.mouse {
-				m.notice = styleHint.Render("✓ wheel scroll and click; ctrl+t to select text")
+				m.notice = "✓ wheel scroll and click; ctrl+t to select text"
 			} else {
-				m.notice = styleHint.Render("✓ drag to select text; ctrl+t to re-enable")
+				m.notice = "✓ drag to select text; ctrl+t to re-enable"
 			}
 			return m, nil
 		case "alt+enter":
@@ -401,7 +403,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if o, ok := m.outputAtScreen(e.Y); ok {
 				m.openModal(o)
 			} else if b, ok := m.codeAtScreen(e.Y); ok {
-				m.notice = styleHint.Render("✓ copied " + b.title() + " to clipboard")
+				m.notice = "✓ copied " + b.title() + " to clipboard"
 				return m, tea.SetClipboard(b.code)
 			}
 		}
@@ -409,21 +411,20 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// applyPick applies a picker selection and returns a status line to append.
-func (m *model) applyPick(kind pickerKind, target string) string {
+// applyPick applies a picker selection, surfacing a transient notice.
+func (m *model) applyPick(kind pickerKind, target string) {
 	switch kind {
 	case pickerModel:
 		if sw, ok := m.agent.Switcher(); ok {
 			sw.SetModel(target)
-			return styleHint.Render("switched to " + m.agent.ProviderName())
+			m.notice = "✓ switched to " + m.agent.ProviderName()
 		}
 	case pickerThink:
 		if th, ok := m.agent.Thinker(); ok {
 			th.SetThinkLevel(llm.ThinkLevel(target))
-			return renderThinkStatus(th.ThinkLevel())
+			m.notice = thinkNotice(th.ThinkLevel())
 		}
 	}
-	return ""
 }
 
 func newModelPicker(models []string, active string) *widgets.ListPicker {

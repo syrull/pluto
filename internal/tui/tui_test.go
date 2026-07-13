@@ -477,8 +477,11 @@ func TestHandleCommandNewClearsTranscript(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("handleCommand(/new) should return nil cmd, got %v", cmd)
 	}
-	if !strings.Contains(status, "new conversation") {
-		t.Fatalf("status = %q, should contain 'new conversation'", status)
+	if status != "" {
+		t.Fatalf("handleCommand(/new) should not push to transcript, got %q", status)
+	}
+	if !strings.Contains(m.notice, "new conversation") {
+		t.Fatalf("notice = %q, should contain 'new conversation'", m.notice)
 	}
 	if len(m.lines) != 0 {
 		t.Fatalf("lines not cleared, got %d lines", len(m.lines))
@@ -508,6 +511,32 @@ func TestModelStatusPersistent(t *testing.T) {
 	status = m.modelStatus()
 	if !strings.Contains(status, providerName) {
 		t.Fatalf("modelStatus (not ready) should contain provider name, got:\n%s", status)
+	}
+}
+
+func TestNotificationsWidgetAboveStatusLine(t *testing.T) {
+	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""), width: 80, input: newInput(80)}
+	m.notice = "✓ drag to select text; ctrl+t to re-enable"
+
+	if got := m.notifications(); !strings.Contains(got, "drag to select") {
+		t.Fatalf("notifications widget should carry the notice, got %q", got)
+	}
+	if got := m.modelStatus(); strings.Contains(got, "drag to select") {
+		t.Fatalf("status line should no longer carry the notice, got %q", got)
+	}
+
+	c := m.content()
+	notif := strings.Index(c, "drag to select")
+	status := strings.Index(c, m.agent.ProviderName())
+	if notif < 0 || status < 0 || notif > status {
+		t.Fatalf("notice should render above the status line (notif=%d status=%d):\n%s", notif, status, c)
+	}
+}
+
+func TestNotificationsBlankWithoutNotice(t *testing.T) {
+	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""), width: 80}
+	if got := m.notifications(); got != "" {
+		t.Fatalf("notifications widget should be blank without a notice, got %q", got)
 	}
 }
 
@@ -652,10 +681,13 @@ func TestHandleCommandThinkLevelsAnthropic(t *testing.T) {
 		t.Fatalf("invalid /think should show usage, got: %s", status)
 	}
 
-	// Valid explicit level.
+	// Valid explicit level surfaces a transient notice.
 	status, _ = m.handleCommand("/think high")
-	if !strings.Contains(status, "high") {
-		t.Fatalf("after /think high, should reflect high level, got: %s", status)
+	if status != "" {
+		t.Fatalf("/think high should not push to transcript, got: %s", status)
+	}
+	if !strings.Contains(m.notice, "high") {
+		t.Fatalf("after /think high, notice should reflect high level, got: %s", m.notice)
 	}
 }
 

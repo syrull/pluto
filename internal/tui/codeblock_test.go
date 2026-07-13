@@ -100,6 +100,39 @@ func TestCopyButtonShownOnlyWithMouse(t *testing.T) {
 	}
 }
 
+func TestSplitMarkdownOrdersProseAndCode(t *testing.T) {
+	segs := splitMarkdown("intro\n```go\nx := 1\n```\noutro")
+	if len(segs) != 3 {
+		t.Fatalf("want 3 segments, got %d: %#v", len(segs), segs)
+	}
+	if segs[0].isCode || !strings.Contains(segs[0].raw, "intro") {
+		t.Fatalf("segment 0 should be the intro prose, got %#v", segs[0])
+	}
+	if !segs[1].isCode || segs[1].code.code != "x := 1" || segs[1].code.lang != "go" {
+		t.Fatalf("segment 1 should be the go code block, got %#v", segs[1])
+	}
+	if segs[2].isCode || !strings.Contains(segs[2].raw, "outro") {
+		t.Fatalf("segment 2 should be the outro prose, got %#v", segs[2])
+	}
+}
+
+func TestCopyAffordanceInterleavedWithBlocks(t *testing.T) {
+	m := model{md: newRenderer(80), width: 80}
+	m.streamText = "```go\nx := 1\n```\nmiddleprose\n```sh\necho hi\n```"
+	m.flushStream()
+
+	tr := m.transcript()
+	goHint := strings.Index(tr, "[ctrl+y] copy go")
+	mid := strings.Index(tr, "middleprose")
+	shHint := strings.Index(tr, "[ctrl+y] copy sh")
+	if goHint < 0 || mid < 0 || shHint < 0 {
+		t.Fatalf("missing expected markers in transcript:\n%s", tr)
+	}
+	if goHint > mid || mid > shHint {
+		t.Fatalf("each copy affordance should sit with its block, not pooled at the end (go=%d mid=%d sh=%d):\n%s", goHint, mid, shHint, tr)
+	}
+}
+
 func TestExtractCodeBlockFourBacktickFence(t *testing.T) {
 	// A block opened with four backticks holds a markdown sample that itself
 	// contains a ``` fence; the language must not keep a stray backtick.

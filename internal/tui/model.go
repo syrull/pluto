@@ -82,8 +82,9 @@ type model struct {
 	modal       *widgets.Modal
 
 	// codeBlocks retains fenced code blocks from assistant messages so they can
-	// be copied to the clipboard; notice is a transient status line (e.g. a copy
-	// confirmation) cleared on the next key or mouse event.
+	// be copied to the clipboard; notice is the transient notifications-widget
+	// message (raw text) shown above the status line, cleared on the next key or
+	// mouse event.
 	codeBlocks []codeBlock
 	notice     string
 }
