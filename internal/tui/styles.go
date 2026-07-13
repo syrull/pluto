@@ -29,9 +29,11 @@ var (
 	styleToolResult = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 	styleReview     = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow: auto-mode review line
 
-	styleShowBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
-	styleCopyBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("5")).Bold(true)
-	styleBashBox = lipgloss.NewStyle().
+	styleShowBtn  = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
+	styleCopyBtn  = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("5")).Bold(true)
+	styleCloseBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("3")).Bold(true)
+	styleErrBtn   = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("1")).Bold(true)
+	styleBashBox  = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("4")).
 			Padding(0, 1)

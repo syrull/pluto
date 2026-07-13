@@ -112,6 +112,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			}
 			flow := m.loginFlow
 			pasted := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+			m.busy = true
 			return styleHint.Render("completing login…"), func() tea.Msg {
 				status, err := m.login.Complete(flow, pasted)
 				return loginDoneMsg{status: status, err: err}
@@ -127,6 +128,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			styleToolArgs.Render(url) + "\n" +
 			"If the browser is on another machine, complete login there and run:\n" +
 			styleToolArgs.Render("/login <paste the redirect URL or code>")
+		m.busy = true
 		return styleHint.Render(hint), func() tea.Msg {
 			status, err := m.login.Wait(flow)
 			return loginDoneMsg{status: status, err: err}
@@ -206,6 +208,14 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			return styleErr.Render("✗ usage: /auto [on|off]"), nil
 		}
 
+	case "/gh":
+		if !ghAvailable() {
+			return styleErr.Render("✗ gh unavailable — install the GitHub CLI and use a github.com remote"), nil
+		}
+		m.ghm = newGHModal()
+		m.ghm.SetSize(m.width, m.height)
+		return "", fetchGitHubCmd
+
 	default:
 		return styleErr.Render("✗ unknown command: " + fields[0]), nil
 	}
@@ -267,6 +277,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picker != nil {
 			m.picker.SetSize(msg.Width, msg.Height)
 		}
+		if m.ghm != nil {
+			m.ghm.SetSize(msg.Width, msg.Height)
+		}
 		m.syncViewport()
 		m.resizeModal()
 		return m, nil
@@ -274,6 +287,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		ks := msg.String()
 		m.notice = ""
+		if m.ghm != nil {
+			if ks == "ctrl+c" {
+				return m, tea.Quit
+			}
+			handled, out := m.ghm.handleKey(ks)
+			if !handled {
+				return m, m.ghm.Update(msg)
+			}
+			return m, m.applyGHOutcome(out)
+		}
 		if m.modal != nil {
 			switch ks {
 			case "ctrl+c":
@@ -381,9 +404,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if status != "" {
 					m.pushText(status)
 				}
-				if cmd != nil {
-					m.busy = true
-				}
 				m.syncViewport()
 				return m, cmd
 			}
@@ -459,6 +479,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncViewport()
 		return m, nil
+	case ghDataMsg:
+		if m.ghm != nil {
+			if msg.err != nil {
+				m.ghm.SetError(msg.err)
+			} else {
+				m.ghm.SetData(msg.issues, msg.prs)
+			}
+		}
+		return m, nil
+	case ghChecksMsg:
+		if m.ghm != nil {
+			m.ghm.SetChecks(msg.pr, msg.checks, msg.err)
+		}
+		return m, nil
+	case ghCloseMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("✗ closing issue #%d failed: %s", msg.number, msg.err.Error())
+			return m, nil
+		}
+		m.notice = fmt.Sprintf("✓ closed issue #%d", msg.number)
+		// The closed issue drops out of the open list; return to it and refresh.
+		if m.ghm != nil {
+			m.ghm.BackToList()
+			return m, fetchGitHubCmd
+		}
+		return m, nil
 	case gitInfoMsg:
 		m.git = gitInfo(msg)
 		m.gitReady = true
@@ -500,6 +546,9 @@ func (m model) forwardToInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleMouse scrolls with the wheel and, on a left click over a truncated tool
 // result, opens its full output in a modal.
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.ghm != nil {
+		return m, m.ghm.Update(msg)
+	}
 	if m.modal != nil {
 		return m, m.modal.Update(msg)
 	}
@@ -523,6 +572,51 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// applyGHOutcome acts on a key press in the GitHub browser: closing it, opening a
+// URL, or seeding a develop/review conversation.
+func (m *model) applyGHOutcome(out ghOutcome) tea.Cmd {
+	switch out.kind {
+	case ghOutcomeClose:
+		m.ghm = nil
+	case ghOutcomeOpenURL:
+		openBrowser(out.url)
+		m.notice = "✓ opened " + out.url
+	case ghOutcomeFetchChecks:
+		return fetchChecksCmd(out.pr.Number)
+	case ghOutcomeCloseIssue:
+		m.notice = fmt.Sprintf("closing issue #%d…", out.issue.Number)
+		return closeIssueCmd(out.issue.Number)
+	case ghOutcomeDevelop:
+		if m.busy {
+			m.notice = "✗ agent is working — try again once it's idle"
+			return nil
+		}
+		m.ghm = nil
+		return m.startGHConversation(developPrompt(out.issue),
+			fmt.Sprintf("develop issue #%d: %s", out.issue.Number, out.issue.Title))
+	case ghOutcomeReview:
+		if m.busy {
+			m.notice = "✗ agent is working — try again once it's idle"
+			return nil
+		}
+		m.ghm = nil
+		return m.startGHConversation(reviewPrompt(out.pr),
+			fmt.Sprintf("review PR #%d: %s", out.pr.Number, out.pr.Title))
+	}
+	return nil
+}
+
+// startGHConversation seeds the agent with prompt while showing a concise label
+// in the transcript, mirroring a normal submitted message.
+func (m *model) startGHConversation(prompt, label string) tea.Cmd {
+	m.showHome = false
+	m.pushText(m.renderUserLine(label))
+	m.busy = true
+	cmd := m.runAgent(prompt)
+	m.syncViewport()
+	return cmd
 }
 
 // applyPick applies a picker selection, surfacing a transient notice.

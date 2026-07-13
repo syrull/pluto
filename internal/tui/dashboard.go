@@ -216,7 +216,7 @@ func (m model) sessionRows() []widgets.DashRow {
 
 func helpLines() []string {
 	return []string{
-		"/new  /dash  /save  /resume  /model  /think  /auto  /login",
+		"/new  /dash  /save  /resume  /model  /think  /auto  /gh  /login",
 		"ctrl+o output · ctrl+y copy · ctrl+t mouse · ctrl+c quit",
 	}
 }

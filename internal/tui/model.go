@@ -116,6 +116,9 @@ type model struct {
 	tree    *widgets.Tree
 	changes *widgets.Tree
 	focus   focusPane
+
+	// ghm is the open GitHub browser (issues/PRs), if any.
+	ghm *ghModal
 }
 
 // focusPane identifies which pane currently has keyboard focus. Tab cycles

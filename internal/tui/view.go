@@ -199,6 +199,9 @@ func mouseEnabled() bool {
 // content renders the screen body: a modal/picker when open, otherwise the main
 // row (conversation pane plus file-tree/changes sidebar) above the footer pane.
 func (m model) content() string {
+	if m.ghm != nil && m.ready {
+		return m.ghm.View()
+	}
 	if m.modal != nil && m.ready {
 		return m.modal.View()
 	}
