@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
 func TestShowButtonForTruncatedResultWithMouse(t *testing.T) {
@@ -229,6 +231,36 @@ func TestReadResultShowsSummaryNotContent(t *testing.T) {
 	}
 	if !strings.Contains(got.outputs[0].title, "foo.go") {
 		t.Fatalf("read modal title = %q, want it to contain the path", got.outputs[0].title)
+	}
+}
+
+func TestReadModalHighlightsYetCopiesRawContent(t *testing.T) {
+	content := "1\tpackage foo\n2\t\n3\tfunc Bar() int { return 42 }"
+	var tm tea.Model = model{md: newRenderer(80)}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	tm, _ = tm.Update(eventMsg{Kind: "tool_call", Tool: "read", Text: `{"path":"foo.go"}`})
+	tm, _ = tm.Update(eventMsg{Kind: "tool_result", Tool: "read", Text: content})
+
+	got := tm.(model)
+	if len(got.outputs) != 1 {
+		t.Fatalf("expected 1 retained output, got %d", len(got.outputs))
+	}
+	if got.outputs[0].path != "foo.go" {
+		t.Fatalf("retained path = %q, want %q for language inference", got.outputs[0].path, "foo.go")
+	}
+
+	got.openModal(got.outputs[0])
+	if strings.ContainsRune(got.modal.Content(), 0x1b) {
+		t.Fatal("copy content must be raw, without highlight escape codes")
+	}
+	if got.modal.Content() != content {
+		t.Fatalf("copy content = %q, want the raw retained text", got.modal.Content())
+	}
+
+	plain := widgets.NewModal(got.outputs[0].title, got.outputs[0].full, modalStyle())
+	plain.SetSize(got.width, got.height)
+	if got.modal.View() == plain.View() {
+		t.Fatal("modal body should be syntax-highlighted, differing from the plain rendering")
 	}
 }
 
