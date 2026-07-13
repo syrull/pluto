@@ -18,7 +18,8 @@ type ModalStyle struct {
 // callers supply a title and content and drive it with SetSize/Update/View.
 type Modal struct {
 	title   string
-	content string
+	content string // raw sanitized text; what Content() and copy return
+	display string // body rendered in the viewport, optionally colorized
 	style   ModalStyle
 	width   int
 	height  int
@@ -28,9 +29,20 @@ type Modal struct {
 
 // NewModal builds a modal over content; call SetSize before View.
 func NewModal(title, content string, style ModalStyle) *Modal {
-	m := &Modal{title: Sanitize(title), content: Sanitize(content), style: style, vp: viewport.New()}
+	s := Sanitize(content)
+	m := &Modal{title: Sanitize(title), content: s, display: s, style: style, vp: viewport.New()}
 	m.vp.KeyMap = modalKeyMap()
 	return m
+}
+
+// Highlight replaces the rendered body with fn applied to the modal's
+// already-sanitized content, leaving Content() and copy returning the raw text.
+// fn runs on sanitized input, so it must only add trusted escape sequences. Call
+// before SetSize.
+func (m *Modal) Highlight(fn func(string) string) {
+	if fn != nil {
+		m.display = fn(m.content)
+	}
 }
 
 func modalKeyMap() viewport.KeyMap {
@@ -50,7 +62,7 @@ func (m *Modal) SetSize(width, height int) {
 	w, h := m.inner()
 	m.vp.SetWidth(w)
 	m.vp.SetHeight(h)
-	m.vp.SetContent(lipgloss.NewStyle().Width(w).Render(m.content))
+	m.vp.SetContent(lipgloss.NewStyle().Width(w).Render(m.display))
 }
 
 // inner returns the width and height available for the scrollable body.

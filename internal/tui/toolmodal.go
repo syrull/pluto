@@ -9,10 +9,12 @@ import (
 
 // toolOutput is content retained from a tool result so a [Show] modal can
 // display it in full: bash/find/read output that was truncated inline, or the
-// content a write produced (which is never shown inline).
+// content a write produced (which is never shown inline). path carries the file
+// path for read/write so the modal can infer a language for highlighting.
 type toolOutput struct {
 	title string
 	full  string
+	path  string
 }
 
 func modalStyle() widgets.ModalStyle {
@@ -42,20 +44,23 @@ func (m *model) retainedOutput(ev agent.Event) (toolOutput, bool) {
 		if content == "" {
 			return toolOutput{}, false
 		}
-		return toolOutput{title: "write: " + formatPathArg(m.pendingArgs), full: content}, true
+		path := formatPathArg(m.pendingArgs)
+		return toolOutput{title: "write: " + path, full: content, path: path}, true
 	}
 	full, ok := resultTruncated(ev.Tool, ev.Text)
 	if !ok {
 		return toolOutput{}, false
 	}
 	title := ev.Tool
+	path := ""
 	switch {
 	case ev.Tool == "read":
 		title = "read: " + formatReadArgs(m.pendingArgs)
+		path = formatPathArg(m.pendingArgs)
 	case bashCommandArg(m.pendingTool, m.pendingArgs) != "":
 		title = ev.Tool + ": " + oneLine(bashCommandArg(m.pendingTool, m.pendingArgs))
 	}
-	return toolOutput{title: title, full: full}, true
+	return toolOutput{title: title, full: full, path: path}, true
 }
 
 // showAffordance renders the marker for a retained output: a clickable button
@@ -69,6 +74,9 @@ func (m *model) showAffordance() string {
 
 func (m *model) openModal(o toolOutput) {
 	m.modal = widgets.NewModal(o.title, o.full, modalStyle())
+	if o.path != "" {
+		m.modal.Highlight(func(s string) string { return highlightSource(s, o.path) })
+	}
 	m.modal.SetSize(m.width, m.height)
 }
 
