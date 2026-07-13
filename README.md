@@ -40,9 +40,10 @@ Conversations can be saved to disk and resumed later:
 - `/sessions` (or `/list`) — list saved conversations.
 
 Sessions are stored one JSON file per conversation under `PLUTO_SESSIONS_DIR`
-(default `~/.pluto/sessions`), written atomically. Set `PLUTO_AUTOSAVE=on` to
-persist the active conversation after each turn so an unexpected exit doesn't
-lose work.
+(default `~/.pluto/sessions`), written atomically. Conversations are autosaved
+after each turn, so an unexpected exit doesn't lose work — resume the latest
+with `/resume`. Set `PLUTO_AUTOSAVE=off` to disable this; `/save` still works on
+demand.
 
 ## Releases
 

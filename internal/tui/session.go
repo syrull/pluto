@@ -80,8 +80,8 @@ func (m *model) resume(id string) {
 	m.syncViewport()
 }
 
-// autosave persists the active conversation after a completed turn when
-// PLUTO_AUTOSAVE is set, so an unexpected exit doesn't lose work.
+// autosave persists the active conversation after a completed turn so an
+// unexpected exit doesn't lose work. It runs by default (see autosaveEnabled).
 func (m *model) autosave() {
 	if !autosaveEnabled() {
 		return
@@ -168,11 +168,12 @@ func renderSessionList(metas []session.Meta) string {
 	return b.String()
 }
 
-// autosaveEnabled reports whether PLUTO_AUTOSAVE requests background saving.
+// autosaveEnabled reports whether conversations are persisted automatically.
+// Autosave is on by default; PLUTO_AUTOSAVE=off opts out.
 func autosaveEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("PLUTO_AUTOSAVE"))) {
-	case "on", "1", "true", "yes":
-		return true
+	case "off", "0", "false", "no":
+		return false
 	}
-	return false
+	return true
 }

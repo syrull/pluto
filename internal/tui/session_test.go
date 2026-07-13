@@ -162,9 +162,9 @@ func TestNewClearsSessionName(t *testing.T) {
 	}
 }
 
-func TestAutosaveOnDoneWhenEnabled(t *testing.T) {
+func TestAutosaveOnDoneByDefault(t *testing.T) {
 	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
-	t.Setenv("PLUTO_AUTOSAVE", "on")
+	t.Setenv("PLUTO_AUTOSAVE", "") // unset: autosave is on by default
 
 	ag := seededAgent([]llm.Message{{Role: llm.RoleUser, Content: "remember me"}})
 	var tm tea.Model = model{agent: ag, md: newRenderer(80), input: newInput(80), busy: true}
@@ -184,9 +184,9 @@ func TestAutosaveOnDoneWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestNoAutosaveWhenDisabled(t *testing.T) {
+func TestNoAutosaveWhenOptedOut(t *testing.T) {
 	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
-	t.Setenv("PLUTO_AUTOSAVE", "")
+	t.Setenv("PLUTO_AUTOSAVE", "off")
 
 	ag := seededAgent([]llm.Message{{Role: llm.RoleUser, Content: "do not persist"}})
 	var tm tea.Model = model{agent: ag, md: newRenderer(80), input: newInput(80), busy: true}
@@ -195,10 +195,10 @@ func TestNoAutosaveWhenDisabled(t *testing.T) {
 	got := tm.(model)
 
 	if got.sessionName != "" {
-		t.Fatalf("autosave disabled should not assign a session name, got %q", got.sessionName)
+		t.Fatalf("PLUTO_AUTOSAVE=off should not assign a session name, got %q", got.sessionName)
 	}
 	store, _ := session.Open()
 	if metas, _ := store.List(); len(metas) != 0 {
-		t.Fatalf("autosave disabled should write nothing, found %d sessions", len(metas))
+		t.Fatalf("PLUTO_AUTOSAVE=off should write nothing, found %d sessions", len(metas))
 	}
 }
