@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -552,6 +554,49 @@ func TestModelStatusStubNoContext(t *testing.T) {
 	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), "")}
 	if status := m.modelStatus(); strings.Contains(status, "context:") {
 		t.Fatalf("stub provider has no context window; status should omit it, got:\n%s", status)
+	}
+}
+
+func TestModelStatusShowsCwd(t *testing.T) {
+	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), "")}
+	status := m.modelStatus()
+	want := shortCwd()
+	if want == "" {
+		t.Skip("cwd unavailable")
+	}
+	if !strings.Contains(status, want) {
+		t.Fatalf("modelStatus should contain cwd %q, got:\n%s", want, status)
+	}
+}
+
+func TestModelStatusCwdBaseOnNarrowWidth(t *testing.T) {
+	cwd := shortCwd()
+	if cwd == "" || filepath.Base(cwd) == cwd {
+		t.Skip("cwd has no distinct base to abbreviate")
+	}
+	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""), width: 20}
+	status := m.modelStatus()
+	base := filepath.Base(cwd)
+	if !strings.Contains(status, " · "+base) {
+		t.Fatalf("narrow width should abbreviate cwd to base %q, got:\n%s", base, status)
+	}
+	if strings.Contains(status, cwd) {
+		t.Fatalf("narrow width should not show full cwd %q, got:\n%s", cwd, status)
+	}
+}
+
+func TestShortCwdHomeAbbreviation(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("home dir unavailable")
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	got := shortCwd()
+	if strings.HasPrefix(dir, home) && !strings.HasPrefix(got, "~") {
+		t.Fatalf("shortCwd under home should start with ~, got %q (cwd %q, home %q)", got, dir, home)
 	}
 }
 

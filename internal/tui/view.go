@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -221,6 +222,18 @@ func (m model) modelStatus() string {
 			status += fmt.Sprintf(" · context: %d%% / %s", pct, formatTokens(window))
 		}
 	}
+	if cwd := shortCwd(); cwd != "" {
+		reserved := len([]rune(status))
+		if m.busy {
+			reserved += len([]rune("● working… · "))
+		}
+		if m.width > 0 && reserved+len([]rune(" · "+cwd)) > m.width {
+			if base := filepath.Base(cwd); base != cwd {
+				cwd = base
+			}
+		}
+		status += " · " + cwd
+	}
 	line := styleModelStatus.Render(status)
 	if m.busy {
 		// The input stays live for steering, so the working state is surfaced
@@ -231,6 +244,24 @@ func (m model) modelStatus() string {
 		line += "  " + m.notice
 	}
 	return line
+}
+
+// shortCwd returns the working directory with the home prefix collapsed to "~",
+// or "" if it can't be determined.
+func shortCwd() string {
+	dir, err := os.Getwd()
+	if err != nil || dir == "" {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if dir == home {
+			return "~"
+		}
+		if strings.HasPrefix(dir, home+string(os.PathSeparator)) {
+			return "~" + dir[len(home):]
+		}
+	}
+	return dir
 }
 
 // formatTokens renders a token count compactly (e.g. 1000000 → "1M", 200000 → "200K").
