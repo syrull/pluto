@@ -1,0 +1,228 @@
+// Package session persists conversations to disk so they can be resumed later.
+package session
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/syrull/pluto/internal/llm"
+)
+
+// formatVersion is the on-disk schema version, bumped on incompatible changes.
+const formatVersion = 1
+
+const ext = ".json"
+
+// ErrNotFound is returned when a named session does not exist.
+var ErrNotFound = errors.New("session: not found")
+
+// Session is a persisted conversation and its metadata.
+type Session struct {
+	Version   int           `json:"version"`
+	ID        string        `json:"id"`
+	Title     string        `json:"title,omitempty"`
+	Model     string        `json:"model,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
+	Messages  []llm.Message `json:"messages"`
+}
+
+// Meta is lightweight session metadata for listing without loading transcripts.
+type Meta struct {
+	ID        string
+	Title     string
+	Model     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Count     int
+}
+
+// Store reads and writes sessions as one JSON file per conversation.
+type Store struct{ dir string }
+
+// Dir returns the configured sessions directory: PLUTO_SESSIONS_DIR, or
+// ~/.pluto/sessions by default.
+func Dir() string {
+	if d := strings.TrimSpace(os.Getenv("PLUTO_SESSIONS_DIR")); d != "" {
+		return d
+	}
+	return filepath.Join(homeDir(), ".pluto", "sessions")
+}
+
+func homeDir() string {
+	if h, err := os.UserHomeDir(); err == nil {
+		return h
+	}
+	return "."
+}
+
+// Open returns a Store rooted at Dir(), creating the directory if missing.
+func Open() (*Store, error) {
+	dir := Dir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("session: create dir %q: %w", dir, err)
+	}
+	return &Store{dir: dir}, nil
+}
+
+// Dir reports the directory the store writes to.
+func (s *Store) Dir() string { return s.dir }
+
+func (s *Store) path(id string) string { return filepath.Join(s.dir, id+ext) }
+
+// Save writes sess atomically (temp file + rename). It stamps the format
+// version and UpdatedAt, and CreatedAt when unset.
+func (s *Store) Save(sess *Session) error {
+	sess.ID = Sanitize(sess.ID)
+	if sess.ID == "" {
+		return errors.New("session: empty id")
+	}
+	now := time.Now()
+	if sess.CreatedAt.IsZero() {
+		sess.CreatedAt = now
+	}
+	sess.UpdatedAt = now
+	sess.Version = formatVersion
+
+	data, err := json.MarshalIndent(sess, "", "  ")
+	if err != nil {
+		return fmt.Errorf("session: marshal: %w", err)
+	}
+	tmp, err := os.CreateTemp(s.dir, sess.ID+".*"+ext+".tmp")
+	if err != nil {
+		return fmt.Errorf("session: temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("session: write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("session: close temp: %w", err)
+	}
+	if err := os.Rename(tmpName, s.path(sess.ID)); err != nil {
+		return fmt.Errorf("session: rename: %w", err)
+	}
+	return nil
+}
+
+// Load reads the session with the given id, returning ErrNotFound when it does
+// not exist and a descriptive error for corrupt or unsupported files.
+func (s *Store) Load(id string) (*Session, error) {
+	id = Sanitize(id)
+	if id == "" {
+		return nil, ErrNotFound
+	}
+	data, err := os.ReadFile(s.path(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("session: read %q: %w", id, err)
+	}
+	var sess Session
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return nil, fmt.Errorf("session: %q is not a valid session file: %w", id, err)
+	}
+	if sess.Version == 0 || sess.Version > formatVersion {
+		return nil, fmt.Errorf("session: %q has unsupported format version %d", id, sess.Version)
+	}
+	return &sess, nil
+}
+
+// List returns metadata for every readable session, newest first. Unreadable or
+// foreign files are skipped rather than failing the whole listing.
+func (s *Store) List() ([]Meta, error) {
+	entries, err := os.ReadDir(s.dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("session: read dir: %w", err)
+	}
+	var metas []Meta
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ext) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var sess Session
+		if err := json.Unmarshal(data, &sess); err != nil || sess.Version == 0 {
+			continue
+		}
+		metas = append(metas, Meta{
+			ID: sess.ID, Title: sess.Title, Model: sess.Model,
+			CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt, Count: len(sess.Messages),
+		})
+	}
+	sort.Slice(metas, func(i, j int) bool { return metas[i].UpdatedAt.After(metas[j].UpdatedAt) })
+	return metas, nil
+}
+
+var unsafeChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+
+// Sanitize converts name into a safe, single-segment file stem: it strips any
+// directory parts, replaces unsafe characters with '-', and trims separators so
+// a session id can never escape the sessions directory.
+func Sanitize(name string) string {
+	name = filepath.Base(strings.TrimSpace(name))
+	name = unsafeChars.ReplaceAllString(name, "-")
+	name = strings.Trim(name, "-._")
+	if name == "." || name == ".." {
+		return ""
+	}
+	return name
+}
+
+// NewID builds a filesystem-safe session id from the current time and title.
+func NewID(title string) string {
+	stamp := time.Now().Format("20060102-150405")
+	slug := Sanitize(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(title)), " ", "-"))
+	if len(slug) > 40 {
+		slug = strings.Trim(slug[:40], "-._")
+	}
+	if slug == "" {
+		return stamp
+	}
+	return stamp + "-" + slug
+}
+
+// TitleFromMessages derives a short title from the first user message.
+func TitleFromMessages(msgs []llm.Message) string {
+	for _, m := range msgs {
+		if m.Role == llm.RoleUser {
+			if t := truncateTitle(oneLine(m.Content)); t != "" {
+				return t
+			}
+		}
+	}
+	return "untitled"
+}
+
+func oneLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
+func truncateTitle(s string) string {
+	const max = 60
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return strings.TrimSpace(string(r[:max])) + "…"
+}

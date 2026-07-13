@@ -11,6 +11,7 @@ import (
 
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
@@ -48,8 +49,50 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.pendingArgs = ""
 		m.streamText = ""
 		m.streamThink = ""
+		m.sessionName = ""
 		m.notice = "✓ started a new conversation"
 		return "", nil
+
+	case "/save":
+		name := ""
+		if len(fields) > 1 {
+			name = strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+		}
+		return m.save(name), nil
+
+	case "/resume":
+		store, err := m.sessionStore()
+		if err != nil {
+			return styleErr.Render("✗ sessions unavailable: " + err.Error()), nil
+		}
+		if len(fields) == 1 {
+			metas, err := store.List()
+			if err != nil {
+				return styleErr.Render("✗ " + err.Error()), nil
+			}
+			if len(metas) == 0 {
+				return styleHint.Render("no saved conversations yet — use /save first"), nil
+			}
+			m.picker = newResumePicker(metas)
+			m.pickerKind = pickerResume
+			return "", nil
+		}
+		m.resume(fields[1])
+		return "", nil
+
+	case "/sessions", "/list":
+		store, err := m.sessionStore()
+		if err != nil {
+			return styleErr.Render("✗ sessions unavailable: " + err.Error()), nil
+		}
+		metas, err := store.List()
+		if err != nil {
+			return styleErr.Render("✗ " + err.Error()), nil
+		}
+		if len(metas) == 0 {
+			return styleHint.Render("no saved conversations yet — use /save first"), nil
+		}
+		return renderSessionList(metas), nil
 
 	case "/login":
 		if m.login == nil {
@@ -346,6 +389,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushStream()
 		m.busy = false
 		m.events = nil
+		m.autosave()
 		// A message steered in as the run was ending wasn't folded into it;
 		// continue the conversation with it as the next turn.
 		if pending := m.agent.TakeSteering(); len(pending) > 0 {
@@ -424,7 +468,22 @@ func (m *model) applyPick(kind pickerKind, target string) {
 			th.SetThinkLevel(llm.ThinkLevel(target))
 			m.notice = thinkNotice(th.ThinkLevel())
 		}
+	case pickerResume:
+		m.resume(target)
 	}
+}
+
+func newResumePicker(metas []session.Meta) *widgets.ListPicker {
+	items := make([]string, len(metas))
+	for i, meta := range metas {
+		items[i] = meta.ID
+	}
+	return widgets.NewListPicker(
+		"resume conversation — ↑/↓ move · enter resume · esc cancel",
+		items,
+		"",
+		widgets.ListStyle{Title: styleHint, Selected: stylePickSel, Item: styleModel},
+	)
 }
 
 func newModelPicker(models []string, active string) *widgets.ListPicker {
