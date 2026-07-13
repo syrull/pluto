@@ -251,6 +251,11 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 		resp, streamed, err := a.generate(ctx, emit)
 		if err != nil {
 			debug.Logf("agent", "generate error: %v", err)
+			// A canceled run unwinds quietly: the UI already knows and a spurious
+			// error line would only add noise.
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			emit(Event{Kind: "error", Text: err.Error()})
 			return "", err
 		}
@@ -289,7 +294,14 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 		// Execute every requested call and feed each result back, correlated
 		// by call ID. Calls in one turn are independent (may run concurrently);
 		// here we run them sequentially for simplicity.
-		for _, call := range resp.ToolCalls {
+		for i, call := range resp.ToolCalls {
+			// A run canceled between calls stops here; record a synthetic result
+			// for this and every remaining call so each tool_use stays paired with
+			// a tool_result and the transcript remains valid for a later turn.
+			if ctx.Err() != nil {
+				a.recordCanceled(resp.ToolCalls[i:])
+				return "", ctx.Err()
+			}
 			if a.gate != nil {
 				rr := a.gate.Review(ctx, call)
 				if call.Name == "bash" && rr.Source != "off" {
@@ -311,6 +323,12 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 			emit(Event{Kind: "tool_call", Tool: call.Name, Text: string(call.Args)})
 
 			result, err := a.registry.Invoke(ctx, call.Name, call.Args)
+			if err != nil && ctx.Err() != nil {
+				// Canceled mid-tool: record canceled results for this and every
+				// remaining call, then unwind quietly.
+				a.recordCanceled(resp.ToolCalls[i:])
+				return "", ctx.Err()
+			}
 			if err != nil {
 				debug.Logf("tool", "%s failed: %v", call.Name, err)
 				result = "error: " + err.Error()
@@ -329,6 +347,17 @@ func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string
 	err := fmt.Errorf("agent: exceeded %d steps without completing", maxSteps)
 	emit(Event{Kind: "error", Text: err.Error()})
 	return "", err
+}
+
+// recordCanceled appends a synthetic "canceled" tool_result for each call so a
+// run aborted mid-turn leaves every tool_use paired with a result, keeping the
+// transcript valid for a later turn.
+func (a *Agent) recordCanceled(calls []llm.ToolCall) {
+	for _, c := range calls {
+		a.transcript = append(a.transcript, llm.Message{
+			Role: llm.RoleTool, ToolName: c.Name, ToolCallID: c.ID, Content: "canceled",
+		})
+	}
 }
 
 // contextBudget is the approximate token ceiling for the re-sent transcript.

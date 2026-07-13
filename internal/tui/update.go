@@ -28,13 +28,28 @@ func listen(ch chan eventMsg) tea.Cmd {
 func (m *model) runAgent(input string) tea.Cmd {
 	ch := make(chan eventMsg, 16)
 	m.events = ch
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
 	go func() {
 		defer close(ch)
-		_, _ = m.agent.Run(context.Background(), input, func(ev agent.Event) {
+		_, _ = m.agent.Run(ctx, input, func(ev agent.Event) {
 			ch <- eventMsg(ev)
 		})
 	}()
 	return listen(ch)
+}
+
+// interrupt aborts the in-flight Run: it cancels the request context (stopping
+// the LLM stream and any running tool) and drops any queued steering so the
+// canceled turn doesn't immediately restart. The pending listener delivers
+// doneMsg once the run unwinds, which clears busy.
+func (m *model) interrupt() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.agent.TakeSteering()
+	m.notice = "✗ canceled request"
 }
 
 func (m *model) handleCommand(line string) (string, tea.Cmd) {
@@ -302,6 +317,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done, cmd := m.paneKey(ks); done {
 			return m, cmd
 		}
+		// Esc while working cancels the in-flight request; otherwise it falls
+		// through to the input so it keeps its normal editing behavior.
+		if ks == "esc" && m.busy {
+			m.interrupt()
+			m.syncViewport()
+			return m, nil
+		}
 		switch ks {
 		case "ctrl+c":
 			return m, tea.Quit
@@ -414,6 +436,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushStream()
 		m.busy = false
 		m.events = nil
+		m.cancel = nil
 		m.autosave()
 		// A message steered in as the run was ending wasn't folded into it;
 		// continue the conversation with it as the next turn.

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -49,11 +50,12 @@ type entry struct {
 type model struct {
 	agent     *agent.Agent
 	login     *LoginHook
-	loginFlow any            // pending OAuth flow awaiting manual code entry (paste fallback)
-	lines     []entry        // committed transcript blocks
-	input     textarea.Model // current input buffer, multi-line with word wrap
-	busy      bool           // agent running; input disabled
-	events    chan eventMsg  // agent → UI stream for the active Run
+	loginFlow any                // pending OAuth flow awaiting manual code entry (paste fallback)
+	lines     []entry            // committed transcript blocks
+	input     textarea.Model     // current input buffer, multi-line with word wrap
+	busy      bool               // agent running; input disabled
+	events    chan eventMsg      // agent → UI stream for the active Run
+	cancel    context.CancelFunc // aborts the in-flight Run; nil when idle
 	width     int
 	height    int
 

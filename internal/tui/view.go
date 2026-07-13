@@ -17,6 +17,10 @@ import (
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
+// workingLabel is the status-line indicator shown while the agent runs; it also
+// advertises esc as the way to cancel the in-flight request.
+const workingLabel = "● working… (esc to cancel)"
+
 // newRenderer uses explicit style rather than glamour.WithAutoStyle() to avoid OSC 11 background-probe leaking onto stdin.
 func newRenderer(width int) *glamour.TermRenderer {
 	if width <= 0 {
@@ -268,7 +272,7 @@ func (m model) modelStatus() string {
 	if cwd := shortCwd(); cwd != "" {
 		reserved := len([]rune(status))
 		if m.busy {
-			reserved += len([]rune("● working… · "))
+			reserved += len([]rune(workingLabel + " · "))
 		}
 		if m.width > 0 && reserved+len([]rune(" · "+cwd)) > m.width {
 			if base := filepath.Base(cwd); base != cwd {
@@ -279,9 +283,9 @@ func (m model) modelStatus() string {
 	}
 	line := styleModelStatus.Render(status)
 	if m.busy {
-		// The input stays live for steering, so the working state is surfaced
-		// here rather than by replacing the input box.
-		line = styleWorking.Render("● working…") + styleModelStatus.Render(" · "+status)
+		// The input stays live for steering, so the working state — and the esc
+		// hint to cancel it — is surfaced here rather than by replacing the input box.
+		line = styleWorking.Render(workingLabel) + styleModelStatus.Render(" · "+status)
 	}
 	return line
 }
