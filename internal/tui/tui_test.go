@@ -748,6 +748,21 @@ func TestMouseModeDefaultsOffAndOptsIn(t *testing.T) {
 	}
 }
 
+func TestCtrlTTogglesMouseMode(t *testing.T) {
+	var tm tea.Model = model{md: newRenderer(80), input: newInput(80), mouse: false}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	press := tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl}
+	tm, _ = tm.Update(press)
+	if got := tm.(model).View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Fatalf("after ctrl+t, MouseMode = %v, want MouseModeCellMotion", got)
+	}
+	tm, _ = tm.Update(press)
+	if got := tm.(model).View().MouseMode; got != tea.MouseModeNone {
+		t.Fatalf("after second ctrl+t, MouseMode = %v, want MouseModeNone", got)
+	}
+}
+
 func TestMouseEnabledEnv(t *testing.T) {
 	cases := map[string]bool{"": false, "off": false, "0": false, "false": false, "NO": false, "on": true, "1": true, "true": true, "YES": true}
 	for val, want := range cases {

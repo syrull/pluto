@@ -60,7 +60,8 @@ type model struct {
 	ready bool
 
 	// mouse enables mouse capture (wheel scroll, click-to-open). Off by default so
-	// the terminal keeps native text selection; PLUTO_MOUSE=on enables it.
+	// the terminal keeps native text selection; PLUTO_MOUSE=on sets the initial
+	// state and ctrl+t toggles it at runtime.
 	mouse bool
 
 	// Streaming accumulators: strings because Bubbletea copies the model by value and Builder panics when copied.

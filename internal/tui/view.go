@@ -222,6 +222,11 @@ func (m model) modelStatus() string {
 			status += fmt.Sprintf(" · context: %d%% / %s", pct, formatTokens(window))
 		}
 	}
+	if m.mouse {
+		status += " · mouse: on"
+	} else {
+		status += " · mouse: off"
+	}
 	if cwd := shortCwd(); cwd != "" {
 		reserved := len([]rune(status))
 		if m.busy {

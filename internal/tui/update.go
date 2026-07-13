@@ -261,6 +261,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.SetClipboard(b.code)
 			}
 			return m, nil
+		case "ctrl+t":
+			m.mouse = !m.mouse
+			if m.mouse {
+				m.notice = styleHint.Render("✓ wheel scroll and click; ctrl+t to select text")
+			} else {
+				m.notice = styleHint.Render("✓ drag to select text; ctrl+t to re-enable")
+			}
+			return m, nil
 		case "alt+enter":
 			m.input.InsertRune('\n')
 			return m, nil
