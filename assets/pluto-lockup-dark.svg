@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="90" viewBox="0 0 360 90" fill="none">
+  <g transform="translate(9 13)">
+    <circle cx="32" cy="32" r="21" stroke="#F4F2EE" stroke-width="4"></circle>
+    <circle cx="32" cy="32" r="8.5" fill="#F4F2EE"></circle>
+    <circle cx="32" cy="11" r="5.5" fill="#8A6DF0"></circle>
+  </g>
+  <text x="92" y="60" font-family="&#39;Space Grotesk&#39;,system-ui,sans-serif" font-size="52" font-weight="600" letter-spacing="-1" fill="#F4F2EE">pluto</text>
+</svg>

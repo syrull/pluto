@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/pluto-lockup-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="assets/pluto-lockup-light.png">
-    <img alt="pluto" src="assets/pluto-lockup-light.png" width="360">
+    <source media="(prefers-color-scheme: dark)" srcset="assets/pluto-lockup-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/pluto-lockup-light.svg">
+    <img alt="pluto" src="assets/pluto-lockup-light.svg" width="360">
   </picture>
 </p>
 
