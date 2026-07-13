@@ -1,4 +1,10 @@
-# pluto
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/pluto-lockup-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/pluto-lockup-light.png">
+    <img alt="pluto" src="assets/pluto-lockup-light.png" width="360">
+  </picture>
+</p>
 
 Pluto is an AI harness. I started this project solely because I don't trust any of the AI harnesses nowadays, for various reasons. I never understood the TypeScript ones, although there are some good ones like `ohmypi` and `pi`.
 
