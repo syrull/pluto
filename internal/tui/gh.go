@@ -290,7 +290,7 @@ func developPrompt(is ghIssue) string {
 		b.WriteString(body)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Explore the relevant code first to understand it, then implement the change. When you're done, summarize what you did.")
+	b.WriteString("Explore the relevant code first to understand it, then implement the change. When you're done, summarize what you did. Create a new branch from up to date main and after that a PR.")
 	return b.String()
 }
 
