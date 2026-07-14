@@ -507,6 +507,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchGitHubCmd
 		}
 		return m, nil
+	case ghMergeMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("✗ merging PR #%d failed: %s", msg.number, msg.err.Error())
+			return m, nil
+		}
+		m.notice = fmt.Sprintf("✓ merged PR #%d", msg.number)
+		// The merged PR drops out of the open list; return to it and refresh.
+		if m.ghm != nil {
+			m.ghm.BackToList()
+			return m, fetchGitHubCmd
+		}
+		return m, nil
 	case orbitTickMsg:
 		// Advance the planet only while home, and only for the live tick loop.
 		if !m.showHome || msg.epoch != m.orbitEpoch {
@@ -597,6 +609,13 @@ func (m *model) applyGHOutcome(out ghOutcome) tea.Cmd {
 	case ghOutcomeCloseIssue:
 		m.notice = fmt.Sprintf("closing issue #%d…", out.issue.Number)
 		return closeIssueCmd(out.issue.Number)
+	case ghOutcomeMergePR:
+		if out.pr.Draft {
+			m.notice = fmt.Sprintf("✗ PR #%d is a draft — mark it ready before merging", out.pr.Number)
+			return nil
+		}
+		m.notice = fmt.Sprintf("merging PR #%d…", out.pr.Number)
+		return mergePRCmd(out.pr.Number)
 	case ghOutcomeDevelop:
 		if m.busy {
 			m.notice = "✗ agent is working — try again once it's idle"

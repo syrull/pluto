@@ -41,6 +41,7 @@ const (
 	ghOutcomeReview
 	ghOutcomeFetchChecks
 	ghOutcomeCloseIssue
+	ghOutcomeMergePR
 )
 
 // ghOutcome tells the model what to do after a key press in the browser. For
@@ -83,6 +84,9 @@ type ghModal struct {
 	// confirmClose arms the destructive Close action: the first [c] arms it, a
 	// second confirms, and any other key disarms it.
 	confirmClose bool
+
+	// confirmMerge arms the irreversible Merge action the same way as confirmClose.
+	confirmMerge bool
 
 	width, height int
 }
@@ -397,6 +401,7 @@ func (g *ghModal) handleKey(ks string) (bool, ghOutcome) {
 		if g.pane == ghPaneDetail {
 			g.pane = ghPaneList
 			g.confirmClose = false
+			g.confirmMerge = false
 			return true, ghOutcome{}
 		}
 		return true, ghOutcome{kind: ghOutcomeClose}
@@ -425,6 +430,7 @@ func (g *ghModal) listKey(ks string) (bool, ghOutcome) {
 		}
 		g.pane = ghPaneDetail
 		g.confirmClose = false
+		g.confirmMerge = false
 		out := g.openChecks()
 		g.refreshDetail()
 		g.vp.GotoTop()
@@ -455,6 +461,9 @@ func (g *ghModal) detailKey(ks string) (bool, ghOutcome) {
 	if ks != "c" {
 		g.confirmClose = false // any other key disarms a pending close
 	}
+	if ks != "m" {
+		g.confirmMerge = false // any other key disarms a pending merge
+	}
 	switch ks {
 	case "up", "down", "pgup", "pgdown", "ctrl+u", "ctrl+d":
 		return false, ghOutcome{} // forwarded to the viewport for scrolling
@@ -479,6 +488,19 @@ func (g *ghModal) detailKey(ks string) (bool, ghOutcome) {
 			g.confirmClose = false
 			return true, ghOutcome{kind: ghOutcomeCloseIssue, issue: is}
 		}
+	case "m":
+		if pr, ok := g.selectedPR(); ok {
+			if pr.Draft {
+				// A draft can't be merged; let the model surface the notice.
+				return true, ghOutcome{kind: ghOutcomeMergePR, pr: pr}
+			}
+			if !g.confirmMerge {
+				g.confirmMerge = true // arm; require a second [m] to confirm
+				return true, ghOutcome{}
+			}
+			g.confirmMerge = false
+			return true, ghOutcome{kind: ghOutcomeMergePR, pr: pr}
+		}
 	}
 	return true, ghOutcome{}
 }
@@ -497,6 +519,7 @@ func (g *ghModal) closableIssue() (ghIssue, bool) {
 func (g *ghModal) BackToList() {
 	g.pane = ghPaneList
 	g.confirmClose = false
+	g.confirmMerge = false
 }
 
 // Update forwards scroll and wheel events to the detail viewport.
@@ -682,6 +705,14 @@ func (g *ghModal) detailView(cw int) string {
 		}
 		heading = pr.Title
 		actions = append(actions, styleShowBtn.Render(" [r] Review "))
+		switch {
+		case pr.Draft:
+			actions = append(actions, styleHint.Render(" [m] Merge (draft) "))
+		case g.confirmMerge:
+			actions = append(actions, styleErrBtn.Render(" [m] confirm merge "))
+		default:
+			actions = append(actions, styleCloseBtn.Render(" [m] Merge "))
+		}
 	}
 	actions = append(actions, styleCopyBtn.Render(" [o] Open in browser "))
 
