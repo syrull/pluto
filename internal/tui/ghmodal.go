@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
@@ -647,6 +648,9 @@ func (g *ghModal) detailView(cw int) string {
 		if is.Author != "" {
 			meta += " · @" + is.Author
 		}
+		if opened := openedAgo(is.CreatedAt, time.Now()); opened != "" {
+			meta += " · opened " + opened
+		}
 		if len(is.Labels) > 0 {
 			meta += " · " + strings.Join(is.Labels, ", ")
 		}
@@ -672,6 +676,9 @@ func (g *ghModal) detailView(cw int) string {
 		}
 		if pr.Author != "" {
 			meta += " · @" + pr.Author
+		}
+		if opened := openedAgo(pr.CreatedAt, time.Now()); opened != "" {
+			meta += " · opened " + opened
 		}
 		heading = pr.Title
 		actions = append(actions, styleShowBtn.Render(" [r] Review "))

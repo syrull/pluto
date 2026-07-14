@@ -3,11 +3,12 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseIssues(t *testing.T) {
 	data := []byte(`[
-		{"number":24,"title":"Show branch","state":"OPEN","url":"https://x/24","body":"do it","author":{"login":"syrull"},"labels":[{"name":"bug"},{"name":"ui"}]}
+		{"number":24,"title":"Show branch","state":"OPEN","url":"https://x/24","body":"do it","author":{"login":"syrull"},"labels":[{"name":"bug"},{"name":"ui"}],"createdAt":"2024-01-02T03:04:05Z"}
 	]`)
 	issues, err := parseIssues(data)
 	if err != nil {
@@ -23,11 +24,14 @@ func TestParseIssues(t *testing.T) {
 	if strings.Join(is.Labels, ",") != "bug,ui" {
 		t.Fatalf("labels = %v", is.Labels)
 	}
+	if !is.CreatedAt.Equal(time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		t.Fatalf("createdAt = %v", is.CreatedAt)
+	}
 }
 
 func TestParsePRsLinksClosingIssues(t *testing.T) {
 	data := []byte(`[
-		{"number":12,"title":"Fix branch","state":"OPEN","url":"https://x/12","body":"b","author":{"login":"me"},"headRefName":"fix-24","isDraft":true,"closingIssuesReferences":[{"number":24}]}
+		{"number":12,"title":"Fix branch","state":"OPEN","url":"https://x/12","body":"b","author":{"login":"me"},"headRefName":"fix-24","isDraft":true,"createdAt":"2024-01-02T03:04:05Z","closingIssuesReferences":[{"number":24}]}
 	]`)
 	prs, links, err := parsePRs(data)
 	if err != nil {
@@ -36,8 +40,32 @@ func TestParsePRsLinksClosingIssues(t *testing.T) {
 	if len(prs) != 1 || prs[0].Number != 12 || prs[0].Branch != "fix-24" || !prs[0].Draft {
 		t.Fatalf("unexpected pr: %+v", prs)
 	}
+	if !prs[0].CreatedAt.Equal(time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		t.Fatalf("createdAt = %v", prs[0].CreatedAt)
+	}
 	if links[24] != 12 {
 		t.Fatalf("expected issue 24 linked to PR 12, got %v", links)
+	}
+}
+
+func TestOpenedAgo(t *testing.T) {
+	now := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"zero", time.Time{}, ""},
+		{"seconds", now.Add(-30 * time.Second), "just now"},
+		{"minutes", now.Add(-5 * time.Minute), "5m ago"},
+		{"hours", now.Add(-3 * time.Hour), "3h ago"},
+		{"days", now.Add(-3 * 24 * time.Hour), "3d ago"},
+		{"old", now.Add(-90 * 24 * time.Hour), "on 2024-03-03"},
+	}
+	for _, c := range cases {
+		if got := openedAgo(c.t, now); got != c.want {
+			t.Errorf("%s: openedAgo = %q, want %q", c.name, got, c.want)
+		}
 	}
 }
 

@@ -22,26 +22,28 @@ const ghTimeout = 20 * time.Second
 // ghIssue is one open GitHub issue. LinkedPR is the number of a pull request that
 // would close it (via a closing reference), or 0 when none is linked.
 type ghIssue struct {
-	Number   int
-	Title    string
-	State    string
-	URL      string
-	Body     string
-	Author   string
-	Labels   []string
-	LinkedPR int
+	Number    int
+	Title     string
+	State     string
+	URL       string
+	Body      string
+	Author    string
+	Labels    []string
+	CreatedAt time.Time
+	LinkedPR  int
 }
 
 // ghPR is one open GitHub pull request.
 type ghPR struct {
-	Number int
-	Title  string
-	State  string
-	URL    string
-	Body   string
-	Author string
-	Branch string
-	Draft  bool
+	Number    int
+	Title     string
+	State     string
+	URL       string
+	Body      string
+	Author    string
+	Branch    string
+	CreatedAt time.Time
+	Draft     bool
 }
 
 // ghData is the result of fetching issues and PRs; err is set when the fetch failed.
@@ -99,6 +101,40 @@ func remoteIsGitHub(remotes string) bool {
 	return strings.Contains(remotes, "github.com")
 }
 
+// parseGHTime parses an RFC 3339 timestamp from gh, returning the zero time when
+// the string is empty or malformed.
+func parseGHTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// openedAgo renders how long ago t was relative to now as a compact "3d ago",
+// falling back to an absolute date for anything older than a month. It returns
+// "" for a zero time.
+func openedAgo(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	switch d := now.Sub(t); {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return "on " + t.Format("2006-01-02")
+	}
+}
+
 // fetchGitHubCmd gathers open issues and PRs off the UI goroutine and links each
 // issue to the PR that closes it.
 func fetchGitHubCmd() tea.Msg {
@@ -120,7 +156,7 @@ func fetchGitHubCmd() tea.Msg {
 
 func ghListIssues() ([]ghIssue, error) {
 	out, err := ghRun("issue", "list", "--state", "open", "--limit", strconv.Itoa(ghListLimit),
-		"--json", "number,title,state,url,body,author,labels")
+		"--json", "number,title,state,url,body,author,labels,createdAt")
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +176,7 @@ func parseIssues(data []byte) ([]ghIssue, error) {
 		Labels []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
+		CreatedAt string `json:"createdAt"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
@@ -153,6 +190,7 @@ func parseIssues(data []byte) ([]ghIssue, error) {
 		issues[i] = ghIssue{
 			Number: r.Number, Title: r.Title, State: r.State, URL: r.URL,
 			Body: r.Body, Author: r.Author.Login, Labels: labels,
+			CreatedAt: parseGHTime(r.CreatedAt),
 		}
 	}
 	return issues, nil
@@ -161,7 +199,7 @@ func parseIssues(data []byte) ([]ghIssue, error) {
 // ghListPRs returns open PRs plus a map of issue number → the PR that closes it.
 func ghListPRs() ([]ghPR, map[int]int, error) {
 	out, err := ghRun("pr", "list", "--state", "open", "--limit", strconv.Itoa(ghListLimit),
-		"--json", "number,title,state,url,body,author,headRefName,isDraft,closingIssuesReferences")
+		"--json", "number,title,state,url,body,author,headRefName,isDraft,createdAt,closingIssuesReferences")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -180,6 +218,7 @@ func parsePRs(data []byte) ([]ghPR, map[int]int, error) {
 		} `json:"author"`
 		HeadRefName string `json:"headRefName"`
 		IsDraft     bool   `json:"isDraft"`
+		CreatedAt   string `json:"createdAt"`
 		Closing     []struct {
 			Number int `json:"number"`
 		} `json:"closingIssuesReferences"`
@@ -193,6 +232,7 @@ func parsePRs(data []byte) ([]ghPR, map[int]int, error) {
 		prs[i] = ghPR{
 			Number: r.Number, Title: r.Title, State: r.State, URL: r.URL,
 			Body: r.Body, Author: r.Author.Login, Branch: r.HeadRefName, Draft: r.IsDraft,
+			CreatedAt: parseGHTime(r.CreatedAt),
 		}
 		for _, c := range r.Closing {
 			if _, ok := links[c.Number]; !ok {

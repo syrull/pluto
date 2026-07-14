@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/lipgloss/v2"
 )
@@ -168,6 +169,23 @@ func TestGHModalOpenURL(t *testing.T) {
 	_, out := g.handleKey("o")
 	if out.kind != ghOutcomeOpenURL || out.url != "https://example/24" {
 		t.Fatalf("o should open the selected URL, got %+v", out)
+	}
+}
+
+func TestGHModalDetailShowsOpenedTime(t *testing.T) {
+	g := sampleGHModal()
+	g.issues[0].CreatedAt = time.Now().Add(-3 * 24 * time.Hour)
+	g.handleKey("enter") // open issue #24 detail
+	if got := g.detailView(g.contentWidth()); !strings.Contains(got, "opened 3d ago") {
+		t.Fatalf("issue detail should show opened time:\n%s", got)
+	}
+
+	g.handleKey("esc")
+	g.handleKey("tab")
+	g.prs[0].CreatedAt = time.Now().Add(-2 * time.Hour)
+	g.handleKey("enter") // open PR #12 detail
+	if got := g.detailView(g.contentWidth()); !strings.Contains(got, "opened 2h ago") {
+		t.Fatalf("PR detail should show opened time:\n%s", got)
 	}
 }
 
