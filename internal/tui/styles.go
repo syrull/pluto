@@ -3,20 +3,19 @@ package tui
 import "charm.land/lipgloss/v2"
 
 var (
-	styleUser        = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	styleModel       = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleTool        = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	styleErr         = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	styleHint        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	stylePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
-	styleModelStatus = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	styleWorking     = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	styleThink       = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	styleThinkHdr    = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
-	styleThinkBox    = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("13")).
-				Padding(0, 1)
+	styleUser     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleModel    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styleTool     = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	styleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	styleHint     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	stylePrompt   = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
+	styleWorking  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	styleThink    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	styleThinkHdr = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
+	styleThinkBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("13")).
+			Padding(0, 1)
 	stylePickSel = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
 	styleDiffAdd = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	styleDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
@@ -54,4 +53,12 @@ var (
 	styleTreeCursor      = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	styleTreeDir         = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
 	styleTreeFile        = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+
+	// Status line: one readable color per segment, with the active model bold so it stands out.
+	styleStatusModel = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleStatusThink = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	styleStatusCtx   = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	styleStatusMouse = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	styleStatusGit   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styleStatusCwd   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 )

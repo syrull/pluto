@@ -248,35 +248,49 @@ func (m model) notifications() string {
 }
 
 func (m model) modelStatus() string {
+	sep := styleHint.Render(" · ")
+
 	name := "no provider"
 	if m.agent != nil {
 		name = m.agent.ProviderName()
 	}
-	status := name
+
+	var spans, plain []string
+	add := func(styled, raw string) {
+		spans = append(spans, styled)
+		plain = append(plain, raw)
+	}
+
+	add(styleStatusModel.Render(name), name)
+
 	if m.agent != nil {
 		if th, ok := m.agent.Thinker(); ok {
-			level := th.ThinkLevel()
-			if level.Thinking() {
-				status += " · thinking: " + string(level)
-			} else {
-				status += " · thinking: off"
+			level := "off"
+			if lvl := th.ThinkLevel(); lvl.Thinking() {
+				level = string(lvl)
 			}
+			raw := "thinking: " + level
+			add(styleStatusThink.Render(raw), raw)
 		}
 		if used, window, ok := m.agent.ContextUsage(); ok && window > 0 {
-			pct := used * 100 / window
-			status += fmt.Sprintf(" · context: %d%% / %s", pct, formatTokens(window))
+			raw := fmt.Sprintf("context: %d%% / %s", used*100/window, formatTokens(window))
+			add(styleStatusCtx.Render(raw), raw)
 		}
 	}
+
+	mouse := "mouse: off"
 	if m.mouse {
-		status += " · mouse: on"
-	} else {
-		status += " · mouse: off"
+		mouse = "mouse: on"
 	}
+	add(styleStatusMouse.Render(mouse), mouse)
+
 	if m.git.isRepo {
-		status += " · ⎇ " + m.git.branchLine()
+		raw := "⎇ " + m.git.branchLine()
+		add(styleStatusGit.Render(raw), raw)
 	}
+
 	if cwd := shortCwd(); cwd != "" {
-		reserved := len([]rune(status))
+		reserved := len([]rune(strings.Join(plain, " · ")))
 		if m.busy {
 			reserved += len([]rune(workingLabel + " · "))
 		}
@@ -285,13 +299,14 @@ func (m model) modelStatus() string {
 				cwd = base
 			}
 		}
-		status += " · " + cwd
+		add(styleStatusCwd.Render(cwd), cwd)
 	}
-	line := styleModelStatus.Render(status)
+
+	line := strings.Join(spans, sep)
 	if m.busy {
 		// The input stays live for steering, so the working state — and the esc
 		// hint to cancel it — is surfaced here rather than by replacing the input box.
-		line = styleWorking.Render(workingLabel) + styleModelStatus.Render(" · "+status)
+		line = styleWorking.Render(workingLabel) + sep + line
 	}
 	return line
 }
