@@ -20,6 +20,16 @@ func TestRenderToolCallBashBoxMultiline(t *testing.T) {
 	}
 }
 
+func TestRenderBashCallBoxSpansFullWidth(t *testing.T) {
+	box, ok := renderBashCallBox(60, `{"command":"echo one\necho two"}`)
+	if !ok {
+		t.Fatal("multi-line bash command should produce a box")
+	}
+	if got := lipgloss.Width(box); got != 60 {
+		t.Fatalf("bash box width = %d, want 60 (full pane interior)", got)
+	}
+}
+
 func TestRenderToolCallSingleLineStaysInline(t *testing.T) {
 	got := renderToolCall(80, "bash", `{"command":"ls -la"}`)
 	if strings.Contains(got, "╭") {

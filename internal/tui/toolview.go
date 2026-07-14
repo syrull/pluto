@@ -75,7 +75,7 @@ func renderBashCallBox(width int, raw string) (string, bool) {
 	if !strings.Contains(a.Command, "\n") {
 		return "", false
 	}
-	w := width - 4
+	w := width
 	if w < 10 {
 		w = 10
 	}
