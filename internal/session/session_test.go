@@ -27,6 +27,40 @@ func sampleMessages() []llm.Message {
 	}
 }
 
+func TestSaveResumePreservesAttachments(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+	store, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	data := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a}
+	in := &Session{ID: "with-image", Title: "look", Messages: []llm.Message{
+		{Role: llm.RoleUser, Content: "look", Attachments: []llm.Attachment{
+			{Kind: llm.AttachmentImage, MediaType: "image/png", Data: data, Name: "shot.png"},
+		}},
+	}}
+	if err := store.Save(in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := store.Load("with-image")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	atts := got.Messages[0].Attachments
+	if len(atts) != 1 {
+		t.Fatalf("attachments = %+v, want one", atts)
+	}
+	a := atts[0]
+	if a.Kind != llm.AttachmentImage || a.MediaType != "image/png" || a.Name != "shot.png" {
+		t.Fatalf("attachment metadata not preserved: %+v", a)
+	}
+	if string(a.Data) != string(data) {
+		t.Fatalf("attachment bytes not preserved: got %v want %v", a.Data, data)
+	}
+}
+
 func TestSaveResumeRoundTrip(t *testing.T) {
 	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
 	store, err := Open()

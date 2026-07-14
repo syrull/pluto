@@ -19,7 +19,7 @@ func TestBuildMessagesCoalescesToolResults(t *testing.T) {
 		{Role: llm.RoleTool, ToolCallID: "t2", ToolName: "read", Content: "B"},
 	}
 
-	msgs := buildMessages(transcript)
+	msgs := buildMessages(transcript, true)
 	if len(msgs) != 3 {
 		t.Fatalf("got %d messages, want 3 (user, assistant, tool-result user)", len(msgs))
 	}
@@ -54,7 +54,7 @@ func TestBuildMessagesFoldsSteeringAfterToolResult(t *testing.T) {
 		{Role: llm.RoleUser, Content: "actually stop"}, // steered in after the tool result
 	}
 
-	msgs := buildMessages(transcript)
+	msgs := buildMessages(transcript, true)
 	if len(msgs) != 3 {
 		t.Fatalf("got %d messages, want 3 (no dangling second user turn)", len(msgs))
 	}
@@ -72,12 +72,61 @@ func TestBuildMessagesMergesConsecutiveUsers(t *testing.T) {
 	msgs := buildMessages([]llm.Message{
 		{Role: llm.RoleUser, Content: "one"},
 		{Role: llm.RoleUser, Content: "two"},
-	})
+	}, true)
 	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
 		t.Fatalf("consecutive user turns should merge into one message, got %+v", msgs)
 	}
 	if msgs[0].Content[0].Text != "one" || msgs[0].Content[1].Text != "two" {
 		t.Fatalf("merged blocks = %+v, want [one two]", msgs[0].Content)
+	}
+}
+
+func TestBuildMessagesEmitsImageBlocks(t *testing.T) {
+	transcript := []llm.Message{
+		{Role: llm.RoleUser, Content: "what is this?", Attachments: []llm.Attachment{
+			{Kind: llm.AttachmentImage, MediaType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+		}},
+	}
+
+	msgs := buildMessages(transcript, true)
+	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
+		t.Fatalf("want one user message with an image + text block, got %+v", msgs)
+	}
+	img, txt := msgs[0].Content[0], msgs[0].Content[1]
+	if img.Type != "image" || img.Source == nil {
+		t.Fatalf("first block = %+v, want an image block with a source", img)
+	}
+	if img.Source.Type != "base64" || img.Source.MediaType != "image/png" || img.Source.Data == "" {
+		t.Fatalf("image source = %+v, want base64 png with data", img.Source)
+	}
+	if txt.Type != "text" || txt.Text != "what is this?" {
+		t.Fatalf("second block = %+v, want the text after the image", txt)
+	}
+}
+
+func TestBuildMessagesDropsImagesWithoutVision(t *testing.T) {
+	transcript := []llm.Message{
+		{Role: llm.RoleUser, Content: "hi", Attachments: []llm.Attachment{
+			{Kind: llm.AttachmentImage, MediaType: "image/png", Data: []byte{1, 2, 3}},
+		}},
+	}
+
+	msgs := buildMessages(transcript, false)
+	if len(msgs) != 1 || len(msgs[0].Content) != 1 || msgs[0].Content[0].Type != "text" {
+		t.Fatalf("non-vision model should get text only, got %+v", msgs)
+	}
+}
+
+func TestBuildMessagesImageOnlyTurn(t *testing.T) {
+	transcript := []llm.Message{
+		{Role: llm.RoleUser, Attachments: []llm.Attachment{
+			{Kind: llm.AttachmentImage, MediaType: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}},
+		}},
+	}
+
+	msgs := buildMessages(transcript, true)
+	if len(msgs) != 1 || len(msgs[0].Content) != 1 || msgs[0].Content[0].Type != "image" {
+		t.Fatalf("image-only turn should carry a single image block, got %+v", msgs)
 	}
 }
 
@@ -302,7 +351,7 @@ func TestBuildMessagesReplaysThinkingFirst(t *testing.T) {
 			ToolCalls: []llm.ToolCall{{ID: "t1", Name: "read", Args: []byte(`{}`)}},
 		},
 	}
-	msgs := buildMessages(transcript)
+	msgs := buildMessages(transcript, true)
 	asst := msgs[1].Content
 	if len(asst) != 3 {
 		t.Fatalf("want 3 blocks (thinking, text, tool_use), got %d: %+v", len(asst), asst)

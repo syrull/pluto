@@ -32,6 +32,17 @@ func contextWindowFor(model string) int {
 	return defaultContextWindow
 }
 
+// modelVision is the set of models that accept image input.
+var modelVision = map[string]bool{
+	"claude-opus-4-8":   true,
+	"claude-sonnet-5":   true,
+	"claude-sonnet-4-5": true,
+	"claude-haiku-4-5":  true,
+}
+
+// visionFor reports whether a model accepts image (vision) input.
+func visionFor(model string) bool { return modelVision[model] }
+
 // Available returns the catalog. Implements the llm.Switchable contract.
 func (p *Provider) Available() []string { return Models }
 

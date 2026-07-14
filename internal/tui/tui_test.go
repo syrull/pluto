@@ -414,7 +414,7 @@ func TestSteerWhileBusyQueuesMessage(t *testing.T) {
 		t.Fatalf("input should reset after a steering submit, got %q", got.input.Value())
 	}
 	pending := ag.TakeSteering()
-	if len(pending) != 1 || pending[0] != "steer me" {
+	if len(pending) != 1 || pending[0].Text != "steer me" {
 		t.Fatalf("steering queue = %v, want [\"steer me\"]", pending)
 	}
 }

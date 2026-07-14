@@ -28,7 +28,7 @@ func newTestAgent(t *testing.T) *Agent {
 func collect(t *testing.T, a *Agent, input string) []Event {
 	t.Helper()
 	var evs []Event
-	if _, err := a.Run(context.Background(), input, func(e Event) { evs = append(evs, e) }); err != nil {
+	if _, err := a.Run(context.Background(), input, nil, func(e Event) { evs = append(evs, e) }); err != nil {
 		t.Fatalf("Run(%q): %v", input, err)
 	}
 	return evs

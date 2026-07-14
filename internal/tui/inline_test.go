@@ -86,7 +86,7 @@ func TestInlineWhileBusyQueuesSteering(t *testing.T) {
 		t.Fatal("running an inline command must not clear the agent's busy state")
 	}
 	pending := ag.TakeSteering()
-	if len(pending) != 1 || !strings.Contains(pending[0], "echo busy") {
+	if len(pending) != 1 || !strings.Contains(pending[0].Text, "echo busy") {
 		t.Fatalf("inline result should be queued as steering while busy, got %v", pending)
 	}
 }

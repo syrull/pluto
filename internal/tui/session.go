@@ -122,7 +122,7 @@ func (m *model) rebuildFromMessages(msgs []llm.Message) {
 	for _, msg := range msgs {
 		switch msg.Role {
 		case llm.RoleUser:
-			m.pushText(m.renderUserLine(msg.Content))
+			m.pushText(m.renderUserLine(msg.Content, msg.Attachments...))
 		case llm.RoleModel:
 			if think := strings.TrimSpace(msg.Thinking); think != "" {
 				m.pushText(m.renderThinkBox(think))

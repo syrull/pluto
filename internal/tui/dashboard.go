@@ -42,6 +42,7 @@ var dashboardTips = []string{
 	"/resume brings back a past conversation — sessions autosave by default.",
 	"/model switches models without losing the conversation.",
 	"prefix a line with ! to run a shell command inline — e.g. !git status.",
+	"/image <path> attaches a picture to your next message for vision models.",
 }
 
 // gitInfo is the git-derived project state shown on the dashboard.
@@ -228,7 +229,7 @@ func (m model) sessionRows() []widgets.DashRow {
 
 func helpLines() []string {
 	return []string{
-		"/new  /dash  /save  /resume  /model  /think  /auto  /gh  /login",
+		"/new  /dash  /save  /resume  /model  /think  /auto  /gh  /image  /login",
 		"ctrl+o output · ctrl+y copy · ctrl+t mouse · ctrl+c quit",
 	}
 }

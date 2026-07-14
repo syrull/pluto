@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/glamour"
 
 	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
@@ -58,6 +59,10 @@ type model struct {
 	cancel    context.CancelFunc // aborts the in-flight Run; nil when idle
 	width     int
 	height    int
+
+	// attachments are images staged (via /image) for the next message; sent with
+	// the turn on submit, then cleared.
+	attachments []llm.Attachment
 
 	// inlineCancel aborts a running inline `!` shell command; nil when none is
 	// running. inlineEpoch fences its result so a canceled or superseded run's

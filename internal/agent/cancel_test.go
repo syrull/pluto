@@ -25,7 +25,7 @@ func TestRunCanceledDuringGenerateStaysQuiet(t *testing.T) {
 	a := New(cancelDuringGenerate{cancel: cancel}, tool.NewRegistry(), "")
 
 	var events []Event
-	_, err := a.Run(ctx, "go", func(e Event) { events = append(events, e) })
+	_, err := a.Run(ctx, "go", nil, func(e Event) { events = append(events, e) })
 
 	if err == nil {
 		t.Fatal("Run should return the cancellation error")
@@ -64,7 +64,7 @@ func TestRunCanceledMidToolKeepsTranscriptValid(t *testing.T) {
 	}}}
 	a := New(p, reg, "")
 
-	if _, err := a.Run(ctx, "go", func(Event) {}); err == nil {
+	if _, err := a.Run(ctx, "go", nil, func(Event) {}); err == nil {
 		t.Fatal("Run should return the cancellation error")
 	}
 

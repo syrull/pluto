@@ -25,14 +25,14 @@ func listen(ch chan eventMsg) tea.Cmd {
 	}
 }
 
-func (m *model) runAgent(input string) tea.Cmd {
+func (m *model) runAgent(input string, attachments []llm.Attachment) tea.Cmd {
 	ch := make(chan eventMsg, 16)
 	m.events = ch
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	go func() {
 		defer close(ch)
-		_, _ = m.agent.Run(ctx, input, func(ev agent.Event) {
+		_, _ = m.agent.Run(ctx, input, attachments, func(ev agent.Event) {
 			ch <- eventMsg(ev)
 		})
 	}()
@@ -217,6 +217,19 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.ghm = newGHModal()
 		m.ghm.SetSize(m.width, m.height)
 		return "", fetchGitHubCmd
+
+	case "/image":
+		if len(fields) < 2 {
+			return styleErr.Render("✗ usage: /image <path>"), nil
+		}
+		path := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+		att, err := loadImageAttachment(path)
+		if err != nil {
+			return styleErr.Render("✗ " + err.Error()), nil
+		}
+		m.attachments = append(m.attachments, att)
+		m.notice = fmt.Sprintf("✓ attached %s (%s) — %d staged, send with your next message", att.Name, humanBytes(len(att.Data)), len(m.attachments))
+		return "", nil
 
 	default:
 		return styleErr.Render("✗ unknown command: " + fields[0]), nil
@@ -416,7 +429,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			in := strings.TrimSpace(m.input.Value())
-			if in == "" {
+			// A bare enter with staged images still sends (an image-only turn).
+			if in == "" && len(m.attachments) == 0 {
 				return m, nil
 			}
 			m.showHome = false
@@ -435,15 +449,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.syncViewport()
 					return m, nil
 				}
-				m.pushText(m.renderUserLine(in))
+				atts := m.takeAttachments()
+				m.pushText(m.renderUserLine(in, atts...))
 				m.input.Reset()
-				m.agent.Steer(in)
+				m.agent.Steer(in, atts...)
 				m.syncViewport()
 				return m, nil
 			}
-			m.pushText(m.renderUserLine(in))
-			m.input.Reset()
+			// Slash commands (e.g. /image) act on the session, not the model, and
+			// don't consume staged attachments; render the raw line without a chip.
 			if strings.HasPrefix(in, "/") {
+				m.pushText(m.renderUserLine(in))
+				m.input.Reset()
 				status, cmd := m.handleCommand(in)
 				if status != "" {
 					m.pushText(status)
@@ -451,8 +468,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 				return m, cmd
 			}
+			atts := m.takeAttachments()
+			m.pushText(m.renderUserLine(in, atts...))
+			m.input.Reset()
 			m.busy = true
-			cmd := m.runAgent(in)
+			cmd := m.runAgent(in, atts)
 			m.syncViewport()
 			return m, cmd
 		default:
@@ -512,10 +532,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancel = nil
 		m.autosave()
 		// A message steered in as the run was ending wasn't folded into it;
-		// continue the conversation with it as the next turn.
+		// continue the conversation with it as the next turn, carrying any
+		// attachments that rode along with the steered messages.
 		if pending := m.agent.TakeSteering(); len(pending) > 0 {
 			m.busy = true
-			cmd := m.runAgent(strings.Join(pending, "\n\n"))
+			texts := make([]string, 0, len(pending))
+			var atts []llm.Attachment
+			for _, p := range pending {
+				texts = append(texts, p.Text)
+				atts = append(atts, p.Attachments...)
+			}
+			cmd := m.runAgent(strings.Join(texts, "\n\n"), atts)
 			m.syncViewport()
 			return m, tea.Batch(cmd, gatherGitCmd)
 		}
@@ -693,7 +720,7 @@ func (m *model) startGHConversation(prompt, label string) tea.Cmd {
 	m.showHome = false
 	m.pushText(m.renderUserLine(label))
 	m.busy = true
-	cmd := m.runAgent(prompt)
+	cmd := m.runAgent(prompt, nil)
 	m.syncViewport()
 	return cmd
 }
