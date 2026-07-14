@@ -59,6 +59,12 @@ type model struct {
 	width     int
 	height    int
 
+	// inlineCancel aborts a running inline `!` shell command; nil when none is
+	// running. inlineEpoch fences its result so a canceled or superseded run's
+	// late-arriving output is dropped.
+	inlineCancel context.CancelFunc
+	inlineEpoch  int
+
 	vp    viewport.Model
 	ready bool
 

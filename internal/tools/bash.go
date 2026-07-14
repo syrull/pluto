@@ -113,6 +113,38 @@ func formatBashResult(out, status string) string {
 	}
 }
 
+// RunInline executes command via `sh -c` and returns its full, untruncated
+// combined stdout+stderr. Unlike the bash tool it applies no output cap: an
+// inline `!` command is one the user explicitly asked to run and wants to see
+// whole. Runtime is bounded by bashMaxTimeout as a backstop against a hang; a
+// canceled context stops the command early.
+func RunInline(ctx context.Context, command string) string {
+	if strings.TrimSpace(command) == "" {
+		return formatBashResult("", "command is required")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, bashMaxTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
+	err := cmd.Run()
+	out := buf.String()
+	switch {
+	case ctx.Err() == context.DeadlineExceeded:
+		return formatBashResult(out, fmt.Sprintf("timed out after %s", bashMaxTimeout))
+	case ctx.Err() == context.Canceled:
+		return formatBashResult(out, "canceled")
+	case err != nil:
+		return formatBashResult(out, err.Error())
+	default:
+		return formatBashResult(out, "")
+	}
+}
+
 // bashMaxBytes bounds the size of returned command output. Unbounded output
 // (e.g. a recursive grep) can otherwise overflow the model context window.
 const bashMaxBytes = 32 * 1024

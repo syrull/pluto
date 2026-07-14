@@ -370,8 +370,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done, cmd := m.paneKey(ks); done {
 			return m, cmd
 		}
-		// Esc while working cancels the in-flight request; otherwise it falls
-		// through to the input so it keeps its normal editing behavior.
+		// Esc aborts a running inline `!` command, else cancels the in-flight
+		// request; otherwise it falls through to the input's normal editing.
+		if ks == "esc" && m.inlineCancel != nil {
+			m.inlineCancel()
+			m.inlineCancel = nil
+			m.inlineEpoch++ // drop the canceled run's late-arriving result
+			m.notice = "✗ canceled command"
+			return m, nil
+		}
 		if ks == "esc" && m.busy {
 			m.interrupt()
 			m.syncViewport()
@@ -413,6 +420,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.showHome = false
+			// Inline shell: `!cmd` runs immediately, independent of the agent,
+			// whether or not a turn is in flight.
+			if strings.HasPrefix(in, "!") {
+				cmd := m.handleInline(in)
+				m.syncViewport()
+				return m, cmd
+			}
 			// The input stays live during generation: a plain message is queued
 			// to steer the running turn; slash commands wait until it's idle.
 			if m.busy {
@@ -481,6 +495,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(listen(m.events), extra)
 		}
 		return m, listen(m.events)
+
+	case bashInlineMsg:
+		// Drop a result from a canceled or superseded inline run.
+		if msg.epoch != m.inlineEpoch {
+			return m, nil
+		}
+		m.applyInlineResult(msg)
+		m.syncViewport()
+		return m, nil
 
 	case doneMsg:
 		m.flushStream()

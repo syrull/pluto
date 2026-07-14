@@ -189,6 +189,16 @@ func (a *Agent) injectSteering() bool {
 	return false
 }
 
+// AddContext folds out-of-band text into the conversation as a user turn
+// without triggering a generation, so the next turn sees it — e.g. the output
+// of an inline shell command the user ran. It mutates the transcript directly
+// and so must only be called while no Run is in flight; use Steer to inject
+// into a running turn.
+func (a *Agent) AddContext(text string) {
+	a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: text})
+	a.trimTranscript()
+}
+
 // ProviderName returns the backend name, for display.
 func (a *Agent) ProviderName() string { return a.provider.Name() }
 
