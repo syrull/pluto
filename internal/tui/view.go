@@ -343,7 +343,7 @@ func trimZero(v float64) string {
 // footer renders the input box, kept live even while the agent is working so the
 // user can steer the running turn.
 func (m model) footer() string {
-	return m.input.View()
+	return m.inputView()
 }
 
 func (m model) liveRegion() string {

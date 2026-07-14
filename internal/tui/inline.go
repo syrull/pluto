@@ -70,10 +70,10 @@ func (m *model) applyInlineResult(msg bashInlineMsg) {
 	}
 }
 
-// renderBashLine renders a submitted inline command with a `!` marker, distinct
-// from a normal user line and echoing the agent's bash tool-call styling.
+// renderBashLine renders a submitted inline command with a red `$` marker
+// matching the input prompt, distinct from a normal user line.
 func (m *model) renderBashLine(command string) string {
-	prefix := styleToolName.Render("! ")
+	prefix := styleBashPrompt.Render("$ ")
 	return wrapBody(prefix, command, styleToolArgs, m.contentWidth())
 }
 

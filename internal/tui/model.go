@@ -178,16 +178,37 @@ func newInput(width int) textarea.Model {
 	s.Focused.CursorLine = lipgloss.NewStyle()
 	s.Blurred.CursorLine = lipgloss.NewStyle()
 	ta.SetStyles(s)
-	ta.SetPromptFunc(2, func(info textarea.PromptInfo) string {
-		if info.LineNumber == 0 {
-			return stylePrompt.Render("› ")
-		}
-		return "  "
-	})
+	ta.SetPromptFunc(2, promptFunc("› ", stylePrompt))
 	ta.SetHeight(inputHeight)
 	ta.SetWidth(width)
 	ta.Focus()
 	return ta
+}
+
+// promptFunc builds a textarea prompt: label (styled) on the first line, blank
+// continuation on the rest.
+func promptFunc(label string, style lipgloss.Style) func(textarea.PromptInfo) string {
+	return func(info textarea.PromptInfo) string {
+		if info.LineNumber == 0 {
+			return style.Render(label)
+		}
+		return "  "
+	}
+}
+
+// inputView renders the input box, switching to the inline-bash affordance — a
+// red `$` prompt and red text — while the buffer starts with `!`. The restyle
+// is applied to the throwaway render copy so it always tracks the current buffer.
+func (m model) inputView() string {
+	if !strings.HasPrefix(strings.TrimSpace(m.input.Value()), "!") {
+		return m.input.View()
+	}
+	s := m.input.Styles()
+	s.Focused.Text = styleBashInput
+	s.Blurred.Text = styleBashInput
+	m.input.SetStyles(s)
+	m.input.SetPromptFunc(2, promptFunc("$ ", styleBashPrompt))
+	return m.input.View()
 }
 
 // New builds the Bubbletea program.

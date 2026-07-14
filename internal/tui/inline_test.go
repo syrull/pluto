@@ -135,3 +135,22 @@ func updateModel(m model, msg tea.Msg) (model, tea.Cmd) {
 	tm, cmd := m.Update(msg)
 	return tm.(model), cmd
 }
+
+func TestInputPromptSwitchesToBashMode(t *testing.T) {
+	m := newInlineModel().(model)
+	m, _ = updateModel(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m.input.SetValue("hello")
+	if got := m.footer(); !strings.Contains(got, "›") {
+		t.Fatalf("a normal message should show the › prompt:\n%s", got)
+	}
+
+	m.input.SetValue("!git status")
+	got := m.footer()
+	if !strings.Contains(got, "$") {
+		t.Fatalf("input starting with ! should show a $ prompt:\n%s", got)
+	}
+	if strings.Contains(got, "›") {
+		t.Fatalf("bash-mode input should replace the › prompt with $:\n%s", got)
+	}
+}
