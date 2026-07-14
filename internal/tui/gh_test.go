@@ -105,6 +105,38 @@ func TestFetchGitHubCmdSurfacesError(t *testing.T) {
 	}
 }
 
+func TestMergePRCmd(t *testing.T) {
+	orig := ghRunRaw
+	defer func() { ghRunRaw = orig }()
+	var got []string
+	ghRunRaw = func(args ...string) ([]byte, string, error) {
+		got = args
+		return nil, "", nil
+	}
+	msg, ok := mergePRCmd(12)().(ghMergeMsg)
+	if !ok {
+		t.Fatal("mergePRCmd did not return ghMergeMsg")
+	}
+	if msg.number != 12 || msg.err != nil {
+		t.Fatalf("unexpected merge msg: %+v", msg)
+	}
+	if strings.Join(got, " ") != "pr merge 12 --squash" {
+		t.Fatalf("unexpected gh args: %v", got)
+	}
+}
+
+func TestMergePRCmdSurfacesError(t *testing.T) {
+	orig := ghRunRaw
+	defer func() { ghRunRaw = orig }()
+	ghRunRaw = func(args ...string) ([]byte, string, error) {
+		return nil, "Pull request is not mergeable", errString("exit status 1")
+	}
+	msg := mergePRCmd(12)().(ghMergeMsg)
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "not mergeable") {
+		t.Fatalf("expected mergeable error, got %v", msg.err)
+	}
+}
+
 func TestRemoteIsGitHub(t *testing.T) {
 	if !remoteIsGitHub("origin\tgit@github.com:syrull/pluto.git (fetch)") {
 		t.Fatal("ssh github remote should be detected")

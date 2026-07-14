@@ -257,6 +257,21 @@ func closeIssueCmd(number int) tea.Cmd {
 	}
 }
 
+// ghMergeMsg reports the result of merging a pull request.
+type ghMergeMsg struct {
+	number int
+	err    error
+}
+
+// mergePRCmd squash-merges a PR via gh off the UI goroutine. --squash is passed
+// explicitly so gh doesn't block prompting for a merge method.
+func mergePRCmd(number int) tea.Cmd {
+	return func() tea.Msg {
+		_, err := ghRun("pr", "merge", strconv.Itoa(number), "--squash")
+		return ghMergeMsg{number: number, err: err}
+	}
+}
+
 // ghCheck is one CI status check on a pull request. Bucket categorizes State
 // into pass/fail/pending/skipping/cancel (per `gh pr checks --json bucket`).
 type ghCheck struct {

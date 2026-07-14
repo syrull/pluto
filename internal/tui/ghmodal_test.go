@@ -163,6 +163,75 @@ func TestGHModalCloseNotOfferedForPR(t *testing.T) {
 	}
 }
 
+func TestGHModalMergePRRequiresConfirm(t *testing.T) {
+	g := sampleGHModal()
+	g.handleKey("tab")   // PRs tab
+	g.handleKey("enter") // open PR #12 detail
+
+	// First [m] arms the confirm and shows the warning button; no outcome yet.
+	if _, out := g.handleKey("m"); out.kind != ghOutcomeNone {
+		t.Fatalf("first m should not merge, got %v", out.kind)
+	}
+	if !g.confirmMerge {
+		t.Fatal("first m should arm confirmMerge")
+	}
+	if !strings.Contains(g.detailView(g.contentWidth()), "confirm merge") {
+		t.Fatal("armed detail view should show the confirm-merge button")
+	}
+	// Second [m] confirms and merges PR #12.
+	_, out := g.handleKey("m")
+	if out.kind != ghOutcomeMergePR || out.pr.Number != 12 {
+		t.Fatalf("second m should merge PR #12, got %+v", out)
+	}
+	if g.confirmMerge {
+		t.Fatal("confirmMerge should reset after merging")
+	}
+}
+
+func TestGHModalMergeDisarmsOnOtherKey(t *testing.T) {
+	g := sampleGHModal()
+	g.handleKey("tab")
+	g.handleKey("enter")
+	g.handleKey("m") // arm
+	if !g.confirmMerge {
+		t.Fatal("m should arm confirmMerge")
+	}
+	g.handleKey("down") // any other key disarms
+	if g.confirmMerge {
+		t.Fatal("a non-m key should disarm confirmMerge")
+	}
+}
+
+func TestGHModalMergeDraftPRNotArmed(t *testing.T) {
+	g := sampleGHModal()
+	g.prs[0].Draft = true
+	g.handleKey("tab")
+	g.handleKey("enter")
+	// A draft passes the outcome straight through without arming so the model
+	// can surface a notice.
+	_, out := g.handleKey("m")
+	if out.kind != ghOutcomeMergePR || out.pr.Number != 12 {
+		t.Fatalf("m on a draft should still yield a merge outcome, got %+v", out)
+	}
+	if g.confirmMerge {
+		t.Fatal("m on a draft should not arm confirmMerge")
+	}
+	if !strings.Contains(g.detailView(g.contentWidth()), "Merge (draft)") {
+		t.Fatal("draft PR detail should show the disabled merge label")
+	}
+}
+
+func TestGHModalMergeNotOfferedForIssue(t *testing.T) {
+	g := sampleGHModal()
+	g.handleKey("enter") // open issue #24 detail
+	if _, out := g.handleKey("m"); out.kind != ghOutcomeNone {
+		t.Fatalf("m on an issue should do nothing, got %v", out.kind)
+	}
+	if strings.Contains(g.detailView(g.contentWidth()), "Merge") {
+		t.Fatal("issue detail should not offer a Merge button")
+	}
+}
+
 func TestGHModalOpenURL(t *testing.T) {
 	g := sampleGHModal()
 	g.issues[0].URL = "https://example/24"
