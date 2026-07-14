@@ -365,6 +365,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		// The slash-command popup claims navigation/completion keys before the
+		// pane and input handlers so Tab completes instead of cycling focus and
+		// Enter completes instead of submitting; typing falls through to the input.
+		if m.cmdMenu != nil {
+			switch ks {
+			case "up", "shift+tab":
+				m.cmdMenu.Up()
+				return m, nil
+			case "down":
+				m.cmdMenu.Down()
+				return m, nil
+			case "tab":
+				if m.cmdMenu.Len() == 1 {
+					m.completeCommand()
+				} else {
+					m.cmdMenu.Cycle()
+				}
+				return m, nil
+			case "enter":
+				m.completeCommand()
+				return m, nil
+			case "esc":
+				m.cmdMenu = nil
+				return m, nil
+			}
+		}
 		// Tab cycles pane focus; while a sidebar pane holds focus, arrows/enter
 		// drive it. Unclaimed keys (typing, ctrl+*) fall through to chat handling.
 		if done, cmd := m.paneKey(ks); done {
@@ -413,6 +439,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "alt+enter":
 			m.showHome = false
 			m.input.InsertRune('\n')
+			m.refreshCommandMenu()
 			return m, nil
 		case "enter":
 			in := strings.TrimSpace(m.input.Value())
@@ -459,6 +486,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHome = false
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
+			m.refreshCommandMenu()
 			return m, cmd
 		}
 

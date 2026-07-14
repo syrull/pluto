@@ -202,7 +202,38 @@ func (m model) content() string {
 	if m.finder != nil && m.ready {
 		return m.finder.View()
 	}
-	return m.mainArea() + "\n" + m.footerPane()
+	main := m.mainArea()
+	if m.cmdMenu != nil {
+		main = m.overlayCommandMenu(main)
+	}
+	return main + "\n" + m.footerPane()
+}
+
+// overlayCommandMenu draws the slash-command popup over the bottom rows of the
+// main area so it sits directly above the footer without changing the overall
+// height. It's a no-op when the menu has no matches or the screen is too short.
+func (m model) overlayCommandMenu(main string) string {
+	lines := strings.Split(main, "\n")
+	if len(lines) < 4 {
+		return main
+	}
+	w := m.width
+	if w <= 0 {
+		w = defaultWrapWidth
+	}
+	menu := m.cmdMenu.View(w, len(lines)-3)
+	if menu == "" {
+		return main
+	}
+	menuLines := strings.Split(menu, "\n")
+	if len(menuLines) > len(lines) {
+		menuLines = menuLines[len(menuLines)-len(lines):]
+	}
+	start := len(lines) - len(menuLines)
+	for i, ml := range menuLines {
+		lines[start+i] = ml
+	}
+	return strings.Join(lines, "\n")
 }
 
 // footerPane renders the footer: a transient notice line above a bordered box
