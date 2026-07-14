@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,9 @@ const (
 	// maxTreeEntries caps how many children a single directory contributes so a
 	// pathological folder can't blow up the sidebar.
 	maxTreeEntries = 300
+	// maxFinderFiles caps how many files the fuzzy finder ranks so a giant repo
+	// can't stall the UI.
+	maxFinderFiles = 20_000
 	sidebarMinW    = 24
 	sidebarMaxW    = 40
 	// maxFileView caps the bytes shown when a file has no diff and its contents
@@ -66,6 +70,54 @@ func loadDir(path string) []*widgets.TreeNode {
 		nodes = nodes[:maxTreeEntries]
 	}
 	return nodes
+}
+
+// collectFiles lists the fuzzy finder's candidate files as paths relative to
+// dir: git's tracked + untracked (gitignore-respecting) set when in a repo,
+// otherwise a plain walk from dir that skips .git.
+func collectFiles(dir string) []string {
+	if out, err := gitRun("-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z"); err == nil {
+		var files []string
+		for _, p := range strings.Split(out, "\x00") {
+			if p == "" {
+				continue
+			}
+			files = append(files, p)
+			if len(files) >= maxFinderFiles {
+				break
+			}
+		}
+		if len(files) > 0 {
+			sort.Strings(files)
+			return files
+		}
+	}
+	return walkFiles(dir)
+}
+
+// walkFiles walks dir for files (skipping .git), returning paths relative to dir.
+func walkFiles(dir string) []string {
+	var files []string
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if rel, err := filepath.Rel(dir, path); err == nil {
+			files = append(files, rel)
+		}
+		if len(files) >= maxFinderFiles {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	sort.Strings(files)
+	return files
 }
 
 // buildStatusStyles maps each changed file's absolute path to the color its name
@@ -240,6 +292,13 @@ func (m *model) paneKey(ks string) (bool, tea.Cmd) {
 				}
 			}
 		}
+	case "/":
+		// Only the Files pane opens the fuzzy finder; elsewhere '/' starts a slash command.
+		if m.focus != paneTree {
+			m.focus = paneChat
+			return false, nil
+		}
+		m.openFinder()
 	case "esc":
 		m.focus = paneChat
 	default:
@@ -248,6 +307,32 @@ func (m *model) paneKey(ks string) (bool, tea.Cmd) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// openFinder opens the fuzzy file picker over the repo's files, remembering the
+// base directory selections resolve against.
+func (m *model) openFinder() {
+	base, err := os.Getwd()
+	if err != nil || base == "" {
+		return
+	}
+	files := collectFiles(base)
+	if len(files) == 0 {
+		return
+	}
+	m.finderBase = base
+	m.finder = widgets.NewFuzzyPicker(
+		"find file — type to filter · ↑/↓ move · ↵ open · esc cancel",
+		files,
+		pickerStyle(),
+	)
+	m.finder.SetSize(m.width, m.height)
+}
+
+// openFinderFile opens a finder selection (a path relative to finderBase) in
+// the file/diff modal, reusing the tree's open logic.
+func (m *model) openFinderFile(rel string) {
+	m.openFileDiff(filepath.Join(m.finderBase, rel))
 }
 
 // openFileDiff shows a file's working-tree diff in a modal, falling back to its
@@ -454,7 +539,7 @@ func (m model) sidebarView(height int) string {
 	var panes string
 	if m.changes == nil {
 		panes = m.paneView(sw, content, avail, "Files", m.tree, m.focus == paneTree)
-		hintText = "tab pane · ↑/↓ move · ↵ diff"
+		hintText = "tab pane · ↑/↓ move · ↵ diff · / find"
 	} else {
 		changesH := avail / 3
 		if changesH < 5 {
@@ -470,7 +555,7 @@ func (m model) sidebarView(height int) string {
 		files := m.paneView(sw, content, filesH, "Files", m.tree, m.focus == paneTree)
 		changes := m.paneView(sw, content, changesH, "Changes", m.changes, m.focus == paneChanges)
 		panes = files + "\n" + changes
-		hintText = "tab pane · ↑/↓ move · ↵ diff"
+		hintText = "tab pane · ↑/↓ move · ↵ diff · / find"
 	}
 	hint := lipgloss.NewStyle().MaxWidth(sw).Render(styleHint.Render(hintText))
 	return panes + "\n" + hint

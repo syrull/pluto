@@ -122,6 +122,11 @@ type model struct {
 	changes *widgets.Tree
 	focus   focusPane
 
+	// finder is the open fuzzy file picker (from '/' in the Files pane), if any;
+	// finderBase is the directory its repo-relative results resolve against.
+	finder     *widgets.FuzzyPicker
+	finderBase string
+
 	// ghm is the open GitHub browser (issues/PRs), if any.
 	ghm *ghModal
 }
