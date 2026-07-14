@@ -503,7 +503,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.applyInlineResult(msg)
 		m.syncViewport()
-		return m, nil
+		// An inline command can mutate the tree and branch; refresh the sidebar.
+		return m, gatherGitCmd
 
 	case doneMsg:
 		m.flushStream()

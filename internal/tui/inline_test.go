@@ -63,6 +63,20 @@ func TestInlineCommandFoldsIntoConversation(t *testing.T) {
 	}
 }
 
+func TestInlineCommandRefreshesGit(t *testing.T) {
+	m := newInlineModel().(model)
+	m, _ = updateModel(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.inlineEpoch = 1
+
+	_, cmd := m.Update(bashInlineMsg{epoch: 1, command: "git checkout main", output: "Switched to branch 'main'"})
+	if cmd == nil {
+		t.Fatal("an inline command result should refresh git state")
+	}
+	if _, ok := cmd().(gitInfoMsg); !ok {
+		t.Fatalf("inline result should dispatch gatherGitCmd, got %T", cmd())
+	}
+}
+
 func TestLoneBangIsHint(t *testing.T) {
 	got := submitInline(t, newInlineModel(), "!")
 
