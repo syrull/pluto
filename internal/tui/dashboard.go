@@ -91,7 +91,9 @@ func gatherGit() gitInfo {
 			g.hasUpstream = true
 		}
 	}
-	if out, err := gitRun("status", "--porcelain"); err == nil {
+	// -uall lists each file inside an untracked directory instead of collapsing
+	// it to a single "dir/" entry, so the Changes pane stays a flat file list.
+	if out, err := gitRun("status", "--porcelain", "-uall"); err == nil {
 		g.parseStatus(out)
 		g.status = statusMap(out, g.root)
 	}
