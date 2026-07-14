@@ -275,6 +275,9 @@ func fileDiff(path, root string) (title, body string, isDiff bool) {
 			rel = r
 		}
 	}
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return rel, "cannot open a directory", false
+	}
 	if out, err := gitRun("diff", "HEAD", "--", path); err == nil {
 		if d := strings.TrimRight(out, "\n"); strings.TrimSpace(d) != "" {
 			return "diff · " + rel, d, true

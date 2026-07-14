@@ -94,6 +94,21 @@ func TestFileDiffFallbackToContents(t *testing.T) {
 	}
 }
 
+func TestFileDiffRejectsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	title, body, isDiff := fileDiff(dir, "")
+	if isDiff {
+		t.Fatal("a directory has no diff")
+	}
+	if !strings.Contains(body, "directory") {
+		t.Fatalf("body should explain it is a directory, got %q", body)
+	}
+	if strings.Contains(body, "is a directory") {
+		t.Fatalf("should not surface the raw read error, got %q", body)
+	}
+	_ = title
+}
+
 func TestColorizeDiffColorsLines(t *testing.T) {
 	out := colorizeDiff("@@ -1 +1 @@\n-old\n+new\n ctx")
 	if !strings.Contains(out, "old") || !strings.Contains(out, "new") {
