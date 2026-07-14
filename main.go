@@ -15,6 +15,7 @@ import (
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/llm/anthropic"
 	"github.com/syrull/pluto/internal/policy"
+	"github.com/syrull/pluto/internal/reposcan"
 	"github.com/syrull/pluto/internal/tool"
 	"github.com/syrull/pluto/internal/tools"
 	"github.com/syrull/pluto/internal/tui"
@@ -48,7 +49,10 @@ var contextFiles = []string{"CLAUDE.md", "AGENTS.md"}
 // hardcoded list that can drift as tools are added or removed. Any project
 // context files (see contextFiles) present in the working directory are
 // injected after the tool listing so their guidance rides along with the
-// system message on every conversation reset.
+// system message on every conversation reset. A one-shot repo snapshot
+// (see internal/reposcan) is appended last so the model starts knowing the
+// basic layout instead of rediscovering it turn-by-turn; it is built once at
+// startup and stays inside the cached system prefix.
 func buildSystemPrompt(reg *tool.Registry) string {
 	var b strings.Builder
 	b.WriteString(systemPromptBase)
@@ -67,6 +71,9 @@ func buildSystemPrompt(reg *tool.Registry) string {
 			continue
 		}
 		fmt.Fprintf(&b, "\n\n--- Project context from %s ---\n%s", name, content)
+	}
+	if overview := reposcan.Overview(); overview != "" {
+		fmt.Fprintf(&b, "\n\n%s", overview)
 	}
 	return b.String()
 }

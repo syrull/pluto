@@ -123,6 +123,39 @@ func TestBuildSystemPromptBothContextFiles(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptIncludesRepoSnapshot verifies the auto-detected repo
+// snapshot is appended after any project context and reflects the project type.
+func TestBuildSystemPromptIncludesRepoSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	reg := newTestRegistry(t)
+
+	if err := os.WriteFile("go.mod", []byte("module example.com/demo\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	prompt := buildSystemPrompt(reg)
+
+	if !strings.Contains(prompt, "Repository snapshot") {
+		t.Errorf("buildSystemPrompt() does not contain the repo snapshot")
+	}
+	if !strings.Contains(prompt, "Go module (example.com/demo)") {
+		t.Errorf("buildSystemPrompt() snapshot does not report the detected project type")
+	}
+}
+
+// TestBuildSystemPromptSnapshotDisabled verifies PLUTO_REPO_SCAN=off suppresses
+// the snapshot entirely.
+func TestBuildSystemPromptSnapshotDisabled(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PLUTO_REPO_SCAN", "off")
+	reg := newTestRegistry(t)
+
+	if strings.Contains(buildSystemPrompt(reg), "Repository snapshot") {
+		t.Errorf("buildSystemPrompt() included snapshot despite PLUTO_REPO_SCAN=off")
+	}
+}
+
 // TestBuildSystemPromptEmptyClaudeFileSkipped verifies that when CLAUDE.md
 // contains only whitespace, it is skipped and no header is emitted.
 func TestBuildSystemPromptEmptyClaudeFileSkipped(t *testing.T) {
