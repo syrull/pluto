@@ -144,8 +144,11 @@ func TestDashCommandReopensDashboard(t *testing.T) {
 	m := newDashModel()
 	m.showHome = false
 	status, cmd := m.handleCommand("/dash")
-	if status != "" || cmd != nil {
-		t.Fatalf("/dash should reopen silently, got status %q cmd %v", status, cmd)
+	if status != "" {
+		t.Fatalf("/dash should reopen silently, got status %q", status)
+	}
+	if cmd == nil {
+		t.Fatal("/dash should restart the planet animation tick")
 	}
 	if !m.showHome {
 		t.Fatal("/dash should set showHome")

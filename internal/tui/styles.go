@@ -61,4 +61,8 @@ var (
 	styleStatusMouse = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 	styleStatusGit   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	styleStatusCwd   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+
+	// Planet banner: the off-white body and purple orbiting dot from the logo.
+	stylePlanet     = lipgloss.NewStyle().Foreground(lipgloss.Color("#F4F2EE"))
+	stylePlanetMoon = lipgloss.NewStyle().Foreground(lipgloss.Color("#8A6DF0")).Bold(true)
 )

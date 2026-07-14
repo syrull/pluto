@@ -110,6 +110,11 @@ type model struct {
 	gitReady bool
 	tip      string
 
+	// orbitFrame advances the home-screen planet animation; orbitEpoch fences the
+	// tick loop so reopening the dashboard doesn't leave two loops running.
+	orbitFrame int
+	orbitEpoch int
+
 	// tree is the sidebar file explorer; changes is the second pane listing only
 	// modified/created files (nil when the tree is clean); focus selects which
 	// pane the keyboard drives.
@@ -180,7 +185,7 @@ func New(a *agent.Agent, login *LoginHook) *tea.Program {
 	return tea.NewProgram(m)
 }
 
-func (m model) Init() tea.Cmd { return gatherGitCmd }
+func (m model) Init() tea.Cmd { return tea.Batch(gatherGitCmd, orbitTick(m.orbitEpoch)) }
 
 func scrollKeymap() viewport.KeyMap {
 	return viewport.KeyMap{

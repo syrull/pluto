@@ -34,6 +34,7 @@ type Dashboard struct {
 	Lines  []string
 	Footer string
 	Width  int
+	Center bool // horizontally center each block within Width
 	Style  DashboardStyle
 }
 
@@ -55,6 +56,11 @@ func (d Dashboard) View() string {
 	}
 	if d.Footer != "" {
 		blocks = append(blocks, d.Style.Muted.Render(d.Footer))
+	}
+	if d.Center && d.Width > 0 {
+		for i, b := range blocks {
+			blocks[i] = lipgloss.PlaceHorizontal(d.Width, lipgloss.Center, b)
+		}
 	}
 	out := strings.Join(blocks, "\n\n")
 	if d.Width > 0 {

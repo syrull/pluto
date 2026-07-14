@@ -387,7 +387,7 @@ func (m model) conversationPane(w, h int) string {
 	switch {
 	case m.showHome:
 		title = "Pluto"
-		body = clipLines(m.dashboardView(w-2), bodyH)
+		body = clipLines(centerVertical(m.dashboardView(w-2), bodyH), bodyH)
 	case m.ready:
 		body = m.vp.View()
 	default:
@@ -510,4 +510,14 @@ func clipLines(s string, n int) string {
 		return strings.Join(lines[:n], "\n")
 	}
 	return s
+}
+
+// centerVertical pads s with blank lines on top so its content sits centered
+// within h rows; it's a no-op when the content is already at least that tall.
+func centerVertical(s string, h int) string {
+	n := strings.Count(s, "\n") + 1
+	if n >= h {
+		return s
+	}
+	return strings.Repeat("\n", (h-n)/2) + s
 }

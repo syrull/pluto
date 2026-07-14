@@ -70,7 +70,9 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 
 	case "/dash":
 		m.showHome = true
-		return "", nil
+		// Restart the animation loop under a fresh epoch so any stale tick stops.
+		m.orbitEpoch++
+		return "", orbitTick(m.orbitEpoch)
 
 	case "/save":
 		name := ""
@@ -505,6 +507,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchGitHubCmd
 		}
 		return m, nil
+	case orbitTickMsg:
+		// Advance the planet only while home, and only for the live tick loop.
+		if !m.showHome || msg.epoch != m.orbitEpoch {
+			return m, nil
+		}
+		m.orbitFrame = (m.orbitFrame + 1) % widgets.OrbitSteps
+		return m, orbitTick(m.orbitEpoch)
 	case gitInfoMsg:
 		m.git = gitInfo(msg)
 		m.gitReady = true

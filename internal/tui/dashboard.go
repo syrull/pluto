@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
@@ -22,9 +23,16 @@ const maxDashboardFiles = 6
 // injected into the system prompt when present (mirrors main.contextFiles).
 var dashboardContextFiles = []string{"CLAUDE.md", "AGENTS.md"}
 
-const dashboardBanner = "┌─┐ ┬   ┬ ┬ ┌┬┐ ┌─┐\n" +
-	"├─┘ │   │ │  │  │ │\n" +
-	"┴   ┴─┘ └─┘  ┴  └─┘"
+// orbitInterval is how often the home-screen planet animation advances a frame.
+const orbitInterval = 90 * time.Millisecond
+
+// orbitTickMsg advances the planet animation. epoch fences stale tick loops so
+// only the most recently started loop keeps running.
+type orbitTickMsg struct{ epoch int }
+
+func orbitTick(epoch int) tea.Cmd {
+	return tea.Tick(orbitInterval, func(time.Time) tea.Msg { return orbitTickMsg{epoch: epoch} })
+}
 
 var dashboardTips = []string{
 	"steer the agent mid-turn — type while it's working to nudge it.",
@@ -149,13 +157,14 @@ func (g gitInfo) changeSummary() string {
 // dashboardView renders the dashboard panels, wrapped to width.
 func (m model) dashboardView(width int) string {
 	d := widgets.Dashboard{
-		Banner: dashboardBanner,
+		Banner: widgets.Planet(m.orbitFrame, stylePlanet, stylePlanetMoon),
 		Rows:   append(m.projectRows(), m.sessionRows()...),
 		Lines:  helpLines(),
 		Footer: m.tipLine(),
 		Width:  width,
+		Center: true,
 		Style: widgets.DashboardStyle{
-			Banner: stylePrompt,
+			Banner: lipgloss.NewStyle(), // the planet art is already colored
 			Label:  styleHint,
 			Value:  styleModel,
 			Border: styleHint,
