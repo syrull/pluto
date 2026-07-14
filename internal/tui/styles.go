@@ -21,6 +21,9 @@ var (
 	styleDiffDel = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	styleDiffCtx = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	styleDiffHdr = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	// Intra-line word highlights: the changed span reversed onto the add/del color.
+	styleDiffAddHi = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("2"))
+	styleDiffDelHi = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("1"))
 
 	styleToolName   = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
 	styleToolArgs   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
