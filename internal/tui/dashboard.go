@@ -41,6 +41,7 @@ var dashboardTips = []string{
 	"ctrl+o reopens the last tool output; ctrl+y copies the last code block.",
 	"/resume brings back a past conversation — sessions autosave by default.",
 	"/model switches models without losing the conversation.",
+	"prefix a line with ! to run a shell command inline — e.g. !git status.",
 }
 
 // gitInfo is the git-derived project state shown on the dashboard.

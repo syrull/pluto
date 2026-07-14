@@ -3,16 +3,20 @@ package tui
 import "charm.land/lipgloss/v2"
 
 var (
-	styleUser     = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	styleModel    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleTool     = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	styleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	styleHint     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	stylePrompt   = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
-	styleWorking  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	styleThink    = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	styleThinkHdr = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
-	styleThinkBox = lipgloss.NewStyle().
+	styleUser   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleModel  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styleTool   = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	styleErr    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	styleHint   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	stylePrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
+	// Inline-bash input mode: a red `$` prompt and red text while the buffer
+	// starts with `!`, signalling the line will run as a shell command.
+	styleBashPrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	styleBashInput  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleWorking    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	styleThink      = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	styleThinkHdr   = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
+	styleThinkBox   = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("13")).
 			Padding(0, 1)
