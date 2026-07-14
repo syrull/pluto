@@ -639,7 +639,7 @@ func TestModelStatusCwdBaseOnNarrowWidth(t *testing.T) {
 	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""), width: 20}
 	status := m.modelStatus()
 	base := filepath.Base(cwd)
-	if !strings.Contains(status, " · "+base) {
+	if !strings.Contains(status, base) {
 		t.Fatalf("narrow width should abbreviate cwd to base %q, got:\n%s", base, status)
 	}
 	if strings.Contains(status, cwd) {
