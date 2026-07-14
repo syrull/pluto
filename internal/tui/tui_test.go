@@ -597,6 +597,40 @@ func TestModelStatusShowsCwd(t *testing.T) {
 	}
 }
 
+func TestModelStatusShowsBranch(t *testing.T) {
+	m := &model{
+		agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""),
+		git:   gitInfo{isRepo: true, branch: "feature-x", hasUpstream: true, ahead: 2, behind: 1},
+	}
+	status := m.modelStatus()
+	if !strings.Contains(status, "feature-x") {
+		t.Fatalf("modelStatus should show the active branch, got:\n%s", status)
+	}
+	if !strings.Contains(status, "↑2") || !strings.Contains(status, "↓1") {
+		t.Fatalf("modelStatus should carry ahead/behind markers, got:\n%s", status)
+	}
+}
+
+func TestModelStatusDetachedHead(t *testing.T) {
+	m := &model{
+		agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""),
+		git:   gitInfo{isRepo: true},
+	}
+	if status := m.modelStatus(); !strings.Contains(status, "(detached)") {
+		t.Fatalf("detached HEAD should read as (detached), got:\n%s", status)
+	}
+}
+
+func TestModelStatusNoBranchOutsideRepo(t *testing.T) {
+	m := &model{
+		agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""),
+		git:   gitInfo{isRepo: false, branch: "should-not-show"},
+	}
+	if status := m.modelStatus(); strings.Contains(status, "should-not-show") || strings.Contains(status, "⎇") {
+		t.Fatalf("non-repo status should omit the branch, got:\n%s", status)
+	}
+}
+
 func TestModelStatusCwdBaseOnNarrowWidth(t *testing.T) {
 	cwd := shortCwd()
 	if cwd == "" || filepath.Base(cwd) == cwd {

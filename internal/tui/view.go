@@ -272,6 +272,9 @@ func (m model) modelStatus() string {
 	} else {
 		status += " · mouse: off"
 	}
+	if m.git.isRepo {
+		status += " · ⎇ " + m.git.branchLine()
+	}
 	if cwd := shortCwd(); cwd != "" {
 		reserved := len([]rune(status))
 		if m.busy {
