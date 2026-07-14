@@ -256,7 +256,8 @@ func (m *model) openFileDiff(path string) {
 	title, body, isDiff := fileDiff(path, m.git.root)
 	m.modal = widgets.NewModal(title, body, modalStyle())
 	if isDiff {
-		m.modal.Highlight(colorizeDiff)
+		w := diffContentWidth(m.width)
+		m.modal.Highlight(func(s string) string { return renderUnifiedDiff(s, w) })
 	} else {
 		m.modal.Highlight(func(s string) string { return highlightSource(s, path) })
 	}
@@ -293,30 +294,16 @@ func fileDiff(path, root string) (title, body string, isDiff bool) {
 	return rel + " (no diff)", string(data), false
 }
 
-// colorizeDiff colors a unified diff line by line with the diff palette.
-func colorizeDiff(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, ln := range lines {
-		lines[i] = colorDiffLine(ln)
+// diffContentWidth is the interior width available for the diff body inside the
+// modal, mirroring the viewport width the modal wraps content to.
+func diffContentWidth(termW int) int {
+	if termW <= 0 {
+		return defaultWrapWidth
 	}
-	return strings.Join(lines, "\n")
-}
-
-func colorDiffLine(ln string) string {
-	switch {
-	case strings.HasPrefix(ln, "@@"):
-		return stylePrompt.Render(ln)
-	case strings.HasPrefix(ln, "+++"), strings.HasPrefix(ln, "---"):
-		return styleDiffHdr.Render(ln)
-	case strings.HasPrefix(ln, "diff "), strings.HasPrefix(ln, "index "):
-		return styleHint.Render(ln)
-	case strings.HasPrefix(ln, "+"):
-		return styleDiffAdd.Render(ln)
-	case strings.HasPrefix(ln, "-"):
-		return styleDiffDel.Render(ln)
-	default:
-		return styleDiffCtx.Render(ln)
+	if w := termW - 8; w > 20 {
+		return w
 	}
+	return 20
 }
 
 // mainHeight is the height of the main row (conversation + sidebar), i.e. the

@@ -109,13 +109,13 @@ func TestFileDiffRejectsDirectory(t *testing.T) {
 	_ = title
 }
 
-func TestColorizeDiffColorsLines(t *testing.T) {
-	out := colorizeDiff("@@ -1 +1 @@\n-old\n+new\n ctx")
+func TestRenderUnifiedDiffColorsLines(t *testing.T) {
+	out := renderUnifiedDiff("@@ -1 +1 @@\n-old\n+new\n ctx", 80)
 	if !strings.Contains(out, "old") || !strings.Contains(out, "new") {
-		t.Fatalf("colorize should preserve text: %q", out)
+		t.Fatalf("render should preserve text: %q", out)
 	}
 	if !strings.Contains(out, "\x1b[") {
-		t.Fatalf("colorize should add ANSI: %q", out)
+		t.Fatalf("render should add ANSI: %q", out)
 	}
 }
 

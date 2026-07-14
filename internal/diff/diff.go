@@ -4,6 +4,7 @@ package diff
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // MaxLines caps the diff computation to prevent worst-case time complexity.
@@ -187,6 +188,49 @@ func Hunks(lines []Line, context int) []Line {
 	}
 	flushGap()
 	return out
+}
+
+// Words runs Myers over the tokens of old and new, returning a token-level edit
+// script suitable for intra-line (word-level) highlighting. Concatenating the
+// ' '/'-' token texts reproduces old and the ' '/'+' texts reproduce new. It
+// returns nil when either side has more than MaxLines tokens.
+func Words(old, new string) []Line {
+	a := tokenize(old)
+	b := tokenize(new)
+	if len(a) > MaxLines || len(b) > MaxLines {
+		return nil
+	}
+	return myers(a, b)
+}
+
+// tokenize splits s into maximal runs of one class (whitespace, word, other) so
+// concatenating the tokens reproduces s exactly.
+func tokenize(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var toks []string
+	start, class := 0, -1
+	for i, r := range s {
+		c := runeClass(r)
+		if class != -1 && c != class {
+			toks = append(toks, s[start:i])
+			start = i
+		}
+		class = c
+	}
+	return append(toks, s[start:])
+}
+
+func runeClass(r rune) int {
+	switch {
+	case r == ' ' || r == '\t':
+		return 0
+	case r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r):
+		return 1
+	default:
+		return 2
+	}
 }
 
 // Stats counts added and removed lines in a diff.

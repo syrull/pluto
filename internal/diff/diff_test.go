@@ -445,6 +445,54 @@ func TestHunksKeepsSmallDiffIntact(t *testing.T) {
 	}
 }
 
+func TestWordsReconstructsBothSides(t *testing.T) {
+	old := "x := oldValue + 1"
+	new := "x := newValue + 1"
+	toks := Words(old, new)
+	if toks == nil {
+		t.Fatal("Words returned nil for small input")
+	}
+
+	var gotOld, gotNew strings.Builder
+	for _, tk := range toks {
+		if tk.Op == ' ' || tk.Op == '-' {
+			gotOld.WriteString(tk.Text)
+		}
+		if tk.Op == ' ' || tk.Op == '+' {
+			gotNew.WriteString(tk.Text)
+		}
+	}
+	if gotOld.String() != old {
+		t.Fatalf("reconstructed old = %q, want %q", gotOld.String(), old)
+	}
+	if gotNew.String() != new {
+		t.Fatalf("reconstructed new = %q, want %q", gotNew.String(), new)
+	}
+}
+
+func TestWordsIsolatesChangedToken(t *testing.T) {
+	toks := Words("keep old keep", "keep new keep")
+	var removed, added []string
+	for _, tk := range toks {
+		switch tk.Op {
+		case '-':
+			if strings.TrimSpace(tk.Text) != "" {
+				removed = append(removed, tk.Text)
+			}
+		case '+':
+			if strings.TrimSpace(tk.Text) != "" {
+				added = append(added, tk.Text)
+			}
+		}
+	}
+	if len(removed) != 1 || removed[0] != "old" {
+		t.Fatalf("removed tokens = %v, want [old]", removed)
+	}
+	if len(added) != 1 || added[0] != "new" {
+		t.Fatalf("added tokens = %v, want [new]", added)
+	}
+}
+
 func slicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
