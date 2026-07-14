@@ -160,19 +160,10 @@ func (m *model) copyAffordance(b codeBlock) string {
 	return lipgloss.PlaceHorizontal(m.contentWidth(), lipgloss.Right, btn)
 }
 
-func (m *model) thinkBoxWidth() int {
-	w := m.contentWidth()
-	w -= 4
-	if w < 10 {
-		w = 10
-	}
-	return w
-}
-
 func (m *model) renderThinkBox(think string) string {
 	hdr := styleThinkHdr.Render("✻ Thinking…")
 	body := styleThink.Render(think)
-	return styleThinkBox.Width(m.thinkBoxWidth()).Render(hdr + "\n" + body)
+	return styleThinkBox.Width(m.contentWidth()).Render(hdr + "\n" + body)
 }
 
 // View renders the transcript layout with the status line and input footer.
