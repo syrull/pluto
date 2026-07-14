@@ -208,6 +208,9 @@ func (m model) content() string {
 	if m.picker != nil && m.ready {
 		return m.picker.View()
 	}
+	if m.finder != nil && m.ready {
+		return m.finder.View()
+	}
 	return m.mainArea() + "\n" + m.footerPane()
 }
 

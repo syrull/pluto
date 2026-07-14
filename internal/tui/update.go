@@ -279,6 +279,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.picker != nil {
 			m.picker.SetSize(msg.Width, msg.Height)
 		}
+		if m.finder != nil {
+			m.finder.SetSize(msg.Width, msg.Height)
+		}
 		if m.ghm != nil {
 			m.ghm.SetSize(msg.Width, msg.Height)
 		}
@@ -334,6 +337,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.picker = nil
 				m.pickerKind = pickerNone
+			}
+			return m, nil
+		}
+		if m.finder != nil {
+			switch ks {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "up":
+				m.finder.Up()
+			case "down":
+				m.finder.Down()
+			case "enter":
+				sel, ok := m.finder.Selected()
+				m.finder = nil
+				if ok {
+					m.openFinderFile(sel)
+				}
+			case "esc":
+				m.finder = nil
+			case "backspace":
+				m.finder.Backspace()
+			default:
+				if msg.Text != "" {
+					m.finder.Insert(msg.Text)
+				}
 			}
 			return m, nil
 		}
@@ -556,7 +584,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // forwardToInput routes a message into the input textarea unless a modal or
 // picker is capturing keys.
 func (m model) forwardToInput(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.modal != nil || m.picker != nil {
+	if m.modal != nil || m.picker != nil || m.finder != nil {
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -573,7 +601,7 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modal != nil {
 		return m, m.modal.Update(msg)
 	}
-	if m.picker != nil {
+	if m.picker != nil || m.finder != nil {
 		return m, nil
 	}
 	switch e := msg.(type) {

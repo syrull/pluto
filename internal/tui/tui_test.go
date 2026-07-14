@@ -837,3 +837,87 @@ func TestMouseEnabledEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestSlashOpensFuzzyFinderInFilesPane(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alpha.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "beta.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	var m tea.Model = model{md: newRenderer(80)}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	got := m.(model)
+	got.focus = paneTree
+	m = got
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	got = m.(model)
+	if got.finder == nil {
+		t.Fatal("'/' in the Files pane should open the fuzzy finder")
+	}
+
+	for _, r := range "alpha" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	got = m.(model)
+	if got.finder.Query() != "alpha" {
+		t.Fatalf("finder query = %q, want %q", got.finder.Query(), "alpha")
+	}
+	if sel, ok := got.finder.Selected(); !ok || sel != "alpha.go" {
+		t.Fatalf("finder selection = %q,%v want alpha.go,true", sel, ok)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = m.(model)
+	if got.finder != nil {
+		t.Fatal("enter should close the finder")
+	}
+	if got.modal == nil {
+		t.Fatal("enter should open the selected file in a modal")
+	}
+}
+
+func TestFinderEscClosesWithoutOpening(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "one.go"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	var m tea.Model = model{md: newRenderer(80)}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	got := m.(model)
+	got.focus = paneTree
+	m = got
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	if m.(model).finder == nil {
+		t.Fatal("'/' should open the finder")
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	got = m.(model)
+	if got.finder != nil {
+		t.Fatal("esc should close the finder")
+	}
+	if got.modal != nil {
+		t.Fatal("esc should not open a modal")
+	}
+}
+
+func TestSlashInChatPaneDoesNotOpenFinder(t *testing.T) {
+	var m tea.Model = model{md: newRenderer(80)}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	got := m.(model)
+	if got.finder != nil {
+		t.Fatal("'/' in the chat pane should not open the finder")
+	}
+	if got.input.Value() != "/" {
+		t.Fatalf("'/' should type into the input, got %q", got.input.Value())
+	}
+}
