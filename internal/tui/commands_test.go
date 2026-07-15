@@ -206,9 +206,10 @@ func TestSlashInFilesPaneDoesNotOpenCommandMenu(t *testing.T) {
 	}
 }
 
-// TestSlashCommandNotEchoedIntoTranscript guards issue #55: submitting a slash
-// command dispatches it without pushing the command text into the conversation,
-// while still surfacing any command status/output.
+// TestSlashCommandNotEchoedIntoTranscript guards issue #55: submitting a TUI
+// action command (e.g. /model — /image is the documented exception) dispatches
+// it without pushing the command text into the conversation, while still
+// surfacing any command status/output.
 func TestSlashCommandNotEchoedIntoTranscript(t *testing.T) {
 	m := newTestModel(t)
 	// Seed a prior line so we can assert the command adds nothing to it.

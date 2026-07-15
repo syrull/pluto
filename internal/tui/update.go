@@ -483,11 +483,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 				return m, nil
 			}
-			// Slash commands are TUI actions, not messages to the agent: dispatch
-			// them without echoing the command text into the transcript. Only any
-			// command status/output is shown. Reset the input before dispatch so it
-			// clears even for commands that act on the session (e.g. /image).
+			// Most slash commands are TUI actions, not messages to the agent, so
+			// they're dispatched without echoing the command text into the
+			// transcript; only any command status/output is shown. /image is the
+			// exception: it composes the next message by staging an attachment, so
+			// it still echoes as a user line (rendered without a chip).
 			if strings.HasPrefix(in, "/") {
+				if strings.Fields(in)[0] == "/image" {
+					m.pushText(m.renderUserLine(in))
+				}
 				m.input.Reset()
 				status, cmd := m.handleCommand(in)
 				if status != "" {
