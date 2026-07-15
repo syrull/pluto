@@ -582,6 +582,7 @@ func buildTools(tools []llm.ToolSpec) []wireTool {
 func mapResponse(wire wireResponse) llm.Response {
 	var out llm.Response
 	var sources sourceSet
+	var pendingSearch string // args of the last server_tool_use, paired with its result
 	for _, b := range wire.Content {
 		switch b.Type {
 		case "text":
@@ -596,8 +597,14 @@ func mapResponse(wire wireResponse) llm.Response {
 			out.ToolCalls = append(out.ToolCalls, llm.ToolCall{
 				ID: b.ID, Name: b.Name, Args: json.RawMessage(b.Input),
 			})
-			// server_tool_use and web_search_tool_result are executed by the
-			// API within this turn; they carry no client-actionable call.
+		case "server_tool_use":
+			// Executed by the API within this turn; surfaced for display only.
+			pendingSearch = string(rawOrNull(b.Input))
+		case "web_search_tool_result":
+			out.ServerToolUses = append(out.ServerToolUses, llm.ServerToolUse{
+				Name: webSearchToolName, Args: pendingSearch, Result: webSearchResultSummary(b.Content),
+			})
+			pendingSearch = ""
 		}
 	}
 	out.Text += sources.footer()
@@ -605,6 +612,52 @@ func mapResponse(wire wireResponse) llm.Response {
 		out.Usage = llm.Usage{InputTokens: wire.Usage.contextTokens(), OutputTokens: wire.Usage.OutputTokens}
 	}
 	return out
+}
+
+// wireWebSearchResult is one result inside a web_search_tool_result block.
+type wireWebSearchResult struct {
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+// webSearchResultSummary renders a web_search_tool_result block's content as a
+// short, human-readable list of "title (url)" lines, one per result, or a note
+// when the search errored or returned nothing.
+func webSearchResultSummary(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "no results"
+	}
+	var results []wireWebSearchResult
+	if err := json.Unmarshal(raw, &results); err == nil {
+		if len(results) == 0 {
+			return "no results"
+		}
+		var b strings.Builder
+		for i, r := range results {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			title := r.Title
+			if title == "" {
+				title = r.URL
+			}
+			b.WriteString(title)
+			if r.URL != "" && r.URL != title {
+				b.WriteString(" (")
+				b.WriteString(r.URL)
+				b.WriteByte(')')
+			}
+		}
+		return b.String()
+	}
+	// Errors arrive as a single object rather than a list.
+	var e struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if json.Unmarshal(raw, &e) == nil && e.ErrorCode != "" {
+		return "error: " + e.ErrorCode
+	}
+	return "no results"
 }
 
 func rawOrNull(r json.RawMessage) json.RawMessage {

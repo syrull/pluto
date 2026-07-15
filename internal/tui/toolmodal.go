@@ -57,6 +57,8 @@ func (m *model) retainedOutput(ev agent.Event) (toolOutput, bool) {
 	case ev.Tool == "read":
 		title = "read: " + formatReadArgs(m.pendingArgs)
 		path = formatPathArg(m.pendingArgs)
+	case ev.Tool == "web_search":
+		title = "web_search: " + formatWebSearchArgs(m.pendingArgs)
 	case bashCommandArg(m.pendingTool, m.pendingArgs) != "":
 		title = ev.Tool + ": " + oneLine(bashCommandArg(m.pendingTool, m.pendingArgs))
 	}

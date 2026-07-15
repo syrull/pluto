@@ -477,6 +477,10 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 				emit(Event{Kind: "text_delta", Text: d.Text})
 			case llm.DeltaThinking:
 				emit(Event{Kind: "thinking_delta", Text: d.Text})
+			case llm.DeltaServerToolCall:
+				emit(Event{Kind: "tool_call", Tool: d.Tool, Text: d.Text})
+			case llm.DeltaServerToolResult:
+				emit(Event{Kind: "tool_result", Tool: d.Tool, Text: d.Text})
 			}
 		})
 		debug.Logf("llm", "GenerateStream done: text=%d chars, tools=%d, err=%v", len(resp.Text), len(resp.ToolCalls), err)
@@ -485,6 +489,14 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 	debug.Logf("llm", "Generate: %d msg(s), %d tool spec(s)", len(a.transcript), len(a.specs()))
 	resp, err = a.provider.Generate(ctx, a.transcript, a.specs())
 	debug.Logf("llm", "Generate done: text=%d chars, tools=%d, err=%v", len(resp.Text), len(resp.ToolCalls), err)
+	// Non-streaming providers can't interleave; surface any server-side tool
+	// use (e.g. web search) after the turn returns.
+	if err == nil {
+		for _, st := range resp.ServerToolUses {
+			emit(Event{Kind: "tool_call", Tool: st.Name, Text: st.Args})
+			emit(Event{Kind: "tool_result", Tool: st.Name, Text: st.Result})
+		}
+	}
 	return resp, false, err
 }
 

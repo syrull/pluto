@@ -38,9 +38,12 @@ type sseMessage struct {
 }
 
 type sseBlock struct {
-	Type string `json:"type"` // text | thinking | tool_use
+	Type string `json:"type"` // text | thinking | tool_use | server_tool_use | web_search_tool_result
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Content carries a web_search_tool_result block's results, delivered whole
+	// on content_block_start rather than via deltas.
+	Content json.RawMessage `json:"content"`
 }
 
 type sseDelta struct {
@@ -60,13 +63,14 @@ type sseError struct {
 
 // blockAccumulator tracks an in-flight content block across its deltas.
 type blockAccumulator struct {
-	kind     string          // text | thinking | tool_use
-	toolID   string          // tool_use id
-	toolName string          // tool_use name
-	sig      string          // thinking signature
-	text     strings.Builder // text/thinking content
-	json     strings.Builder // tool_use input_json fragments
-	cites    []wireCitation  // web-search citations on a text block
+	kind         string          // text | thinking | tool_use | server_tool_use | web_search_tool_result
+	toolID       string          // tool_use id
+	toolName     string          // tool_use name
+	sig          string          // thinking signature
+	text         strings.Builder // text/thinking content
+	json         strings.Builder // tool_use input_json fragments
+	cites        []wireCitation  // web-search citations on a text block
+	searchResult json.RawMessage // web_search_tool_result content
 }
 
 // GenerateStream implements llm.StreamingProvider.
@@ -143,6 +147,7 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 				acc.kind = ev.ContentBlock.Type
 				acc.toolID = ev.ContentBlock.ID
 				acc.toolName = ev.ContentBlock.Name
+				acc.searchResult = ev.ContentBlock.Content
 			}
 			blocks[ev.Index] = acc
 
@@ -189,6 +194,18 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 				}
 				out.ToolCalls = append(out.ToolCalls, llm.ToolCall{
 					ID: acc.toolID, Name: acc.toolName, Args: json.RawMessage(args),
+				})
+			case "server_tool_use":
+				// Server-side (e.g. web search); surface the query for display.
+				args := acc.json.String()
+				if args == "" {
+					args = "{}"
+				}
+				onDelta(llm.StreamDelta{Kind: llm.DeltaServerToolCall, Tool: acc.toolName, Text: args})
+			case "web_search_tool_result":
+				onDelta(llm.StreamDelta{
+					Kind: llm.DeltaServerToolResult, Tool: webSearchToolName,
+					Text: webSearchResultSummary(acc.searchResult),
 				})
 			}
 

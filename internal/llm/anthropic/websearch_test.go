@@ -138,9 +138,25 @@ func TestMapResponseWebSearchResultAndCitations(t *testing.T) {
 		t.Fatalf("resp.Text = %q\nwant %q", resp.Text, expectedText)
 	}
 
-	// Assert no ToolCalls (server_tool_use blocks are not surfaced).
+	// Assert no ToolCalls (server_tool_use blocks are not client-actionable).
 	if len(resp.ToolCalls) != 0 {
 		t.Fatalf("resp.ToolCalls should be empty, got %d", len(resp.ToolCalls))
+	}
+
+	// Assert the web search is surfaced as a ServerToolUse for display.
+	if len(resp.ServerToolUses) != 1 {
+		t.Fatalf("resp.ServerToolUses = %d, want 1", len(resp.ServerToolUses))
+	}
+	st := resp.ServerToolUses[0]
+	if st.Name != webSearchToolName {
+		t.Fatalf("ServerToolUse.Name = %q, want %q", st.Name, webSearchToolName)
+	}
+	if st.Args != "{}" {
+		t.Fatalf("ServerToolUse.Args = %q, want %q", st.Args, "{}")
+	}
+	wantResult := "Example Site (https://example.com)\nhttps://example.org"
+	if st.Result != wantResult {
+		t.Fatalf("ServerToolUse.Result = %q\nwant %q", st.Result, wantResult)
 	}
 
 	// Assert sources are deduplicated by URL in first-seen order and titles fall back to URL.
@@ -149,6 +165,28 @@ func TestMapResponseWebSearchResultAndCitations(t *testing.T) {
 	}
 	if !strings.Contains(resp.Text, "https://example.org (https://example.org)") {
 		t.Fatalf("citations footer missing expected source 2 with fallback title")
+	}
+}
+
+func TestWebSearchResultSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"two results", `[{"type":"web_search_result","url":"https://a.com","title":"A"},{"type":"web_search_result","url":"https://b.com","title":"B"}]`, "A (https://a.com)\nB (https://b.com)"},
+		{"title falls back to url", `[{"type":"web_search_result","url":"https://a.com","title":""}]`, "https://a.com"},
+		{"empty list", `[]`, "no results"},
+		{"missing content", ``, "no results"},
+		{"error object", `{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}`, "error: max_uses_exceeded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := webSearchResultSummary([]byte(tt.raw))
+			if got != tt.want {
+				t.Fatalf("webSearchResultSummary(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -170,13 +208,13 @@ event: content_block_start
 data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"search_1","name":"web_search"}}
 
 event: content_block_delta
-data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"golang\"}"}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":1}
 
 event: content_block_start
-data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","id":"search_1"}}
+data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","id":"search_1","content":[{"type":"web_search_result","url":"https://go.dev","title":"Go"}]}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":2}
@@ -234,6 +272,33 @@ data: {"type":"message_stop"}
 	}
 	if !foundFooter {
 		t.Fatalf("citations footer not found in deltas")
+	}
+
+	// Assert the web search call (with its query) and result were surfaced as
+	// deltas, in order, before the answer text that follows.
+	var call, result *llm.StreamDelta
+	callIdx, textAfterIdx := -1, -1
+	for i := range deltas {
+		switch deltas[i].Kind {
+		case llm.DeltaServerToolCall:
+			call = &deltas[i]
+			callIdx = i
+		case llm.DeltaServerToolResult:
+			result = &deltas[i]
+		case llm.DeltaText:
+			if strings.Contains(deltas[i].Text, "for you") {
+				textAfterIdx = i
+			}
+		}
+	}
+	if call == nil || call.Tool != webSearchToolName || !strings.Contains(call.Text, "golang") {
+		t.Fatalf("web search call delta missing or wrong: %+v", call)
+	}
+	if result == nil || result.Tool != webSearchToolName || !strings.Contains(result.Text, "Go (https://go.dev)") {
+		t.Fatalf("web search result delta missing or wrong: %+v", result)
+	}
+	if callIdx == -1 || textAfterIdx == -1 || callIdx > textAfterIdx {
+		t.Fatalf("web search deltas must precede the trailing answer text (call=%d textAfter=%d)", callIdx, textAfterIdx)
 	}
 }
 

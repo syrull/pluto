@@ -69,7 +69,22 @@ type Response struct {
 	Thinking    string
 	ThinkingSig string
 	ToolCalls   []ToolCall
-	Usage       Usage
+	// ServerToolUses record tools the provider executed server-side within the
+	// turn (e.g. web search). They are surfaced for display only.
+	ServerToolUses []ServerToolUse
+	Usage          Usage
+}
+
+// ServerToolUse is a tool the provider ran server-side within a turn (e.g.
+// Anthropic web search). It is surfaced for display only: not replayed to the
+// model or re-executed by the client.
+type ServerToolUse struct {
+	// Name is the server tool's name, e.g. "web_search".
+	Name string
+	// Args is the JSON input the model passed to the tool.
+	Args string
+	// Result is a short, human-readable summary of what the tool returned.
+	Result string
 }
 
 // Usage reports token counts for a single provider turn.
@@ -150,12 +165,21 @@ const (
 	DeltaText DeltaKind = "text"
 	// DeltaThinking is extended-thinking reasoning content.
 	DeltaThinking DeltaKind = "thinking"
+	// DeltaServerToolCall marks a tool the provider executed server-side within
+	// the turn (e.g. web search), surfaced mid-stream so the UI can show it in
+	// order. Text carries the JSON input; Tool names the tool.
+	DeltaServerToolCall DeltaKind = "server_tool_call"
+	// DeltaServerToolResult marks that server-side tool's result. Text carries a
+	// human-readable summary; Tool names the tool.
+	DeltaServerToolResult DeltaKind = "server_tool_result"
 )
 
 // StreamDelta is one incremental chunk emitted during streaming generation.
 type StreamDelta struct {
 	Kind DeltaKind
 	Text string
+	// Tool names the server tool for DeltaServerToolCall/DeltaServerToolResult.
+	Tool string
 }
 
 // StreamingProvider is an optional capability to stream output token-by-token.
