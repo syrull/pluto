@@ -86,6 +86,13 @@ type Agent struct {
 	provider     llm.Provider
 	registry     *tool.Registry
 	systemPrompt string
+
+	// mu guards transcript and lastUsage. A single Agent runs one turn at a time,
+	// but Snapshot/ContextUsage can be called from the UI goroutine (e.g. autosave
+	// snapshotting every workspace) while another agent's Run appends to its own
+	// transcript, so those accesses must be synchronized. mu is never held across
+	// network I/O — only around the transcript/usage reads and writes themselves.
+	mu           sync.RWMutex
 	transcript   []llm.Message
 	lastUsage    llm.Usage // token accounting from the most recent turn
 	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
@@ -116,9 +123,11 @@ func New(p llm.Provider, r *tool.Registry, systemPrompt string, opts ...Option) 
 
 // Reset discards the running transcript and starts a fresh conversation.
 func (a *Agent) Reset() {
+	a.TakeSteering()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.transcript = nil
 	a.lastUsage = llm.Usage{}
-	a.TakeSteering()
 	if a.systemPrompt != "" {
 		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemPrompt})
 	}
@@ -127,6 +136,8 @@ func (a *Agent) Reset() {
 // Snapshot returns a copy of the running transcript, safe for the caller to
 // persist or inspect without racing the agent's own mutations.
 func (a *Agent) Snapshot() []llm.Message {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	out := make([]llm.Message, len(a.transcript))
 	copy(out, a.transcript)
 	return out
@@ -139,6 +150,8 @@ func (a *Agent) Snapshot() []llm.Message {
 // restored history is bounded on the next turn.
 func (a *Agent) Load(msgs []llm.Message) {
 	a.TakeSteering()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.transcript = nil
 	if a.systemPrompt != "" {
 		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemPrompt})
@@ -149,7 +162,7 @@ func (a *Agent) Load(msgs []llm.Message) {
 		}
 		a.transcript = append(a.transcript, m)
 	}
-	a.trimTranscript()
+	a.trimTranscriptLocked()
 	// Seed usage from the restored transcript so the context indicator reflects a
 	// resumed conversation before the next turn reports real token counts.
 	a.lastUsage = llm.Usage{InputTokens: estimateTokens(a.transcript)}
@@ -186,17 +199,19 @@ func (a *Agent) hasSteering() bool {
 // the transcript. It reports whether anything was injected.
 func (a *Agent) injectSteering() bool {
 	msgs := a.TakeSteering()
+	if len(msgs) == 0 {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	for _, msg := range msgs {
 		debug.Logf("agent", "steer input=%q attachments=%d", truncate(msg.Text, 256), len(msg.Attachments))
 		a.transcript = append(a.transcript, llm.Message{
 			Role: llm.RoleUser, Content: msg.Text, Attachments: msg.Attachments,
 		})
 	}
-	if len(msgs) > 0 {
-		a.trimTranscript()
-		return true
-	}
-	return false
+	a.trimTranscriptLocked()
+	return true
 }
 
 // AddContext folds out-of-band text into the conversation as a user turn
@@ -205,8 +220,10 @@ func (a *Agent) injectSteering() bool {
 // and so must only be called while no Run is in flight; use Steer to inject
 // into a running turn.
 func (a *Agent) AddContext(text string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: text})
-	a.trimTranscript()
+	a.trimTranscriptLocked()
 }
 
 // ProviderName returns the backend name, for display.
@@ -220,7 +237,10 @@ func (a *Agent) ContextUsage() (used, window int, ok bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	return a.lastUsage.InputTokens + a.lastUsage.OutputTokens, cw.ContextWindow(), true
+	a.mu.RLock()
+	used = a.lastUsage.InputTokens + a.lastUsage.OutputTokens
+	a.mu.RUnlock()
+	return used, cw.ContextWindow(), true
 }
 
 // Switcher exposes the provider's runtime model-switching capability.
@@ -256,7 +276,7 @@ func (a *Agent) specs() []llm.ToolSpec {
 // Run processes one user input (with optional attachments) to completion.
 func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachment, emit func(Event)) (string, error) {
 	debug.Logf("agent", "run input=%q attachments=%d provider=%s", truncate(input, 256), len(attachments), a.provider.Name())
-	a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: input, Attachments: attachments})
+	a.appendMessages(llm.Message{Role: llm.RoleUser, Content: input, Attachments: attachments})
 	a.trimTranscript()
 
 	for step := range maxSteps {
@@ -285,7 +305,7 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 		// non-streaming path.
 		if len(resp.ToolCalls) == 0 {
 			debug.Logf("agent", "final reply (%d chars, streamed=%t)", len(resp.Text), streamed)
-			a.transcript = append(a.transcript, llm.Message{
+			a.appendMessages(llm.Message{
 				Role: llm.RoleModel, Content: resp.Text,
 				Thinking: resp.Thinking, ThinkingSig: resp.ThinkingSig,
 			})
@@ -303,7 +323,7 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 		// Record the assistant tool-use turn verbatim (thinking first, then any
 		// leading text) so the provider can replay it on the next request.
 		debug.Logf("agent", "model requested %d tool call(s)", len(resp.ToolCalls))
-		a.transcript = append(a.transcript, llm.Message{
+		a.appendMessages(llm.Message{
 			Role: llm.RoleModel, Content: resp.Text, ToolCalls: resp.ToolCalls,
 			Thinking: resp.Thinking, ThinkingSig: resp.ThinkingSig,
 		})
@@ -332,7 +352,7 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 					emit(Event{Kind: "tool_call", Tool: call.Name, Text: string(call.Args)})
 					result := fmt.Sprintf("refused by auto mode (%s): %s", rr.Source, rr.Reason)
 					emit(Event{Kind: "error", Tool: call.Name, Text: result})
-					a.transcript = append(a.transcript, llm.Message{
+					a.appendMessages(llm.Message{
 						Role: llm.RoleTool, ToolName: call.Name, ToolCallID: call.ID, Content: result,
 					})
 					continue
@@ -357,7 +377,7 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 				debug.Logf("tool", "%s ok result=%s", call.Name, truncate(result, 512))
 				emit(Event{Kind: "tool_result", Tool: call.Name, Text: result})
 			}
-			a.transcript = append(a.transcript, llm.Message{
+			a.appendMessages(llm.Message{
 				Role: llm.RoleTool, ToolName: call.Name, ToolCallID: call.ID, Content: result,
 			})
 		}
@@ -373,11 +393,13 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 // run aborted mid-turn leaves every tool_use paired with a result, keeping the
 // transcript valid for a later turn.
 func (a *Agent) recordCanceled(calls []llm.ToolCall) {
+	msgs := make([]llm.Message, 0, len(calls))
 	for _, c := range calls {
-		a.transcript = append(a.transcript, llm.Message{
+		msgs = append(msgs, llm.Message{
 			Role: llm.RoleTool, ToolName: c.Name, ToolCallID: c.ID, Content: "canceled",
 		})
 	}
+	a.appendMessages(msgs...)
 }
 
 // contextBudget is the approximate token ceiling for the re-sent transcript.
@@ -396,12 +418,33 @@ func (a *Agent) contextBudget() int {
 	return budget
 }
 
-// trimTranscript drops the oldest exchanges once the transcript's estimated token
-// size exceeds the context budget. It cuts only at human-input boundaries so
+// appendMessages appends messages to the transcript under the lock.
+func (a *Agent) appendMessages(msgs ...llm.Message) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.transcript = append(a.transcript, msgs...)
+}
+
+// setUsage records the latest token accounting under the lock.
+func (a *Agent) setUsage(u llm.Usage) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.lastUsage = u
+}
+
+// trimTranscript trims the transcript under the lock; see trimTranscriptLocked.
+func (a *Agent) trimTranscript() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.trimTranscriptLocked()
+}
+
+// trimTranscriptLocked drops the oldest exchanges once the transcript's estimated
+// token size exceeds the context budget. It cuts only at human-input boundaries so
 // tool_use/tool_result pairs and each assistant turn's leading thinking block stay
 // intact, always keeps the leading system message, and never trims the in-progress
-// exchange (the most recent user turn onward).
-func (a *Agent) trimTranscript() {
+// exchange (the most recent user turn onward). The caller holds a.mu.
+func (a *Agent) trimTranscriptLocked() {
 	budget := a.contextBudget()
 	if budget <= 0 || estimateTokens(a.transcript) <= budget {
 		return
@@ -466,7 +509,7 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 	// doesn't clobber the last good count.
 	defer func() {
 		if resp.Usage.InputTokens > 0 {
-			a.lastUsage = resp.Usage
+			a.setUsage(resp.Usage)
 		}
 	}()
 	if sp, ok := a.provider.(llm.StreamingProvider); ok {

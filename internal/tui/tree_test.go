@@ -82,7 +82,7 @@ func TestFileDiffFallbackToContents(t *testing.T) {
 	if err := os.WriteFile(p, []byte("hello world"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	title, body, isDiff := fileDiff(p, "")
+	title, body, isDiff := fileDiff(p, "", "")
 	if isDiff {
 		t.Fatal("a file outside the repo should have no diff")
 	}
@@ -96,7 +96,7 @@ func TestFileDiffFallbackToContents(t *testing.T) {
 
 func TestFileDiffRejectsDirectory(t *testing.T) {
 	dir := t.TempDir()
-	title, body, isDiff := fileDiff(dir, "")
+	title, body, isDiff := fileDiff(dir, "", "")
 	if isDiff {
 		t.Fatal("a directory has no diff")
 	}

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/syrull/pluto/internal/llm"
@@ -52,8 +53,13 @@ var effortOrder = []llm.ThinkLevel{
 
 const defaultThinkLevel = llm.ThinkXHigh
 
-// Provider talks to the Anthropic Messages API.
+// Provider talks to the Anthropic Messages API. A single Provider is shared
+// across parallel agents, so its mutable fields (model, credentials, effort
+// level, web-search cap) are guarded by mu: setters take the write lock, request
+// building and the accessors take the read lock. http and baseURL are set once
+// at construction and never mutated, so they are read without the lock.
 type Provider struct {
+	mu       sync.RWMutex
 	model    string
 	creds    credentials
 	http     *http.Client
@@ -112,30 +118,48 @@ func resolveWebSearchMaxUses() int {
 }
 
 // Name implements llm.Provider.
-func (p *Provider) Name() string { return "anthropic/" + p.model }
+func (p *Provider) Name() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return "anthropic/" + p.model
+}
 
 // Model returns the current model id.
-func (p *Provider) Model() string { return p.model }
+func (p *Provider) Model() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.model
+}
 
 // ContextWindow reports the active model's total context window in tokens.
-func (p *Provider) ContextWindow() int { return contextWindowFor(p.model) }
+func (p *Provider) ContextWindow() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return contextWindowFor(p.model)
+}
 
 // SetWebSearchMaxUses sets the server-side web search cap; 0 disables the tool.
 func (p *Provider) SetWebSearchMaxUses(n int) {
 	if n < 0 {
 		n = 0
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.webSearchMaxUses = n
 }
 
 // SetModel switches the active model, re-clamping the effort level as needed.
 func (p *Provider) SetModel(model string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.model = model
-	p.SetThinkLevel(p.thinkLvl)
+	p.setThinkLevelLocked(p.thinkLvl)
 }
 
 // ThinkLevel reports the current extended-thinking effort level.
 func (p *Provider) ThinkLevel() llm.ThinkLevel {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.thinkLvl == "" {
 		return llm.ThinkNone
 	}
@@ -144,7 +168,14 @@ func (p *Provider) ThinkLevel() llm.ThinkLevel {
 
 // SetThinkLevel sets the effort level, clamped to what the active model supports.
 func (p *Provider) SetThinkLevel(level llm.ThinkLevel) {
-	supported := p.ThinkLevels()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.setThinkLevelLocked(level)
+}
+
+// setThinkLevelLocked clamps and sets the effort level; the caller holds mu.
+func (p *Provider) setThinkLevelLocked(level llm.ThinkLevel) {
+	supported := p.thinkLevelsLocked()
 	// supported always leads with ThinkNone. A model with no thinking support
 	// has only [ThinkNone], so any request collapses to none.
 	if level == llm.ThinkNone || level == "" || len(supported) == 1 {
@@ -161,6 +192,13 @@ func (p *Provider) SetThinkLevel(level llm.ThinkLevel) {
 
 // ThinkLevels lists the levels the active model supports.
 func (p *Provider) ThinkLevels() []llm.ThinkLevel {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.thinkLevelsLocked()
+}
+
+// thinkLevelsLocked lists the supported effort levels; the caller holds mu.
+func (p *Provider) thinkLevelsLocked() []llm.ThinkLevel {
 	levels := []llm.ThinkLevel{llm.ThinkNone}
 	if regimeFor(p.model) == regimeNone {
 		return levels
@@ -177,11 +215,13 @@ func (p *Provider) ThinkLevels() []llm.ThinkLevel {
 
 // Reauth re-resolves credentials from the environment and auth store.
 func (p *Provider) Reauth() error {
-	creds := resolveCredentials()
+	creds := resolveCredentials() // resolves off-lock; may do I/O
 	if !creds.ok() {
 		return fmt.Errorf("anthropic: no credentials after reauth")
 	}
+	p.mu.Lock()
 	p.creds = creds
+	p.mu.Unlock()
 	return nil
 }
 
@@ -315,8 +355,13 @@ func (u wireUsage) contextTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
-// buildRequest assembles the wire request, routing extended-thinking per the model regime.
+// buildRequest assembles the wire request, routing extended-thinking per the
+// model regime. It reads the shared mutable state (model, effort, credentials,
+// web-search cap) under the read lock; it does no network I/O, so a concurrent
+// setter only waits for the (fast) assembly, never a request round-trip.
 func (p *Provider) buildRequest(transcript []llm.Message, tools []llm.ToolSpec, stream bool) wireRequest {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	req := wireRequest{
 		Model:     p.model,
 		MaxTokens: p.maxTok,
@@ -413,7 +458,12 @@ func (p *Provider) send(ctx context.Context, req wireRequest) (*http.Response, e
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: build request: %w", err)
 	}
-	p.creds.apply(httpReq.Header)
+	// Copy credentials under the read lock, then release it before the (blocking)
+	// network round-trip so a concurrent Reauth/SetModel never waits on I/O.
+	p.mu.RLock()
+	creds := p.creds
+	p.mu.RUnlock()
+	creds.apply(httpReq.Header)
 	resp, err := p.http.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: request failed: %w", err)

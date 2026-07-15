@@ -2,6 +2,8 @@ package anthropic
 
 import (
 	"encoding/json"
+	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/syrull/pluto/internal/llm"
@@ -362,4 +364,47 @@ func TestBuildMessagesReplaysThinkingFirst(t *testing.T) {
 	if asst[1].Type != "text" || asst[2].Type != "tool_use" {
 		t.Fatalf("block order = %q,%q,%q", asst[0].Type, asst[1].Type, asst[2].Type)
 	}
+}
+
+// TestProviderConcurrentAccessNoRace exercises the shared-provider path: parallel
+// agents build requests / read accessors while the UI mutates model, effort, and
+// web-search settings. It must be race-free under `go test -race`.
+func TestProviderConcurrentAccessNoRace(t *testing.T) {
+	p := &Provider{
+		model:            DefaultModel,
+		creds:            credentials{mode: authAPIKey, token: "k"},
+		http:             &http.Client{},
+		baseURL:          defaultBaseURL,
+		maxTok:           defaultMaxTok,
+		thinkLvl:         defaultThinkLevel,
+		webSearchMaxUses: defaultWebSearchMaxUses,
+	}
+	transcript := []llm.Message{{Role: llm.RoleSystem, Content: "sys"}, {Role: llm.RoleUser, Content: "hi"}}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ { // readers: mimic parallel agents assembling requests
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 300; j++ {
+				_ = p.buildRequest(transcript, nil, j%2 == 0)
+				_ = p.Name()
+				_ = p.ThinkLevel()
+				_ = p.ThinkLevels()
+				_ = p.ContextWindow()
+			}
+		}()
+	}
+	for i := 0; i < 3; i++ { // writers: mimic /model, /think, web-search toggles
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 300; j++ {
+				p.SetThinkLevel(llm.ThinkLow)
+				p.SetModel(DefaultModel)
+				p.SetWebSearchMaxUses(j % 4)
+			}
+		}()
+	}
+	wg.Wait()
 }

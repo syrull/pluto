@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 // Edit replaces an exact substring in a file; the substring must occur exactly once.
@@ -34,7 +35,7 @@ type editArgs struct {
 	New  string `json:"new"`
 }
 
-func (Edit) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (Edit) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a editArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("edit: invalid arguments: %w", err)
@@ -46,7 +47,8 @@ func (Edit) Execute(_ context.Context, args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("edit: old is required")
 	}
 
-	data, err := os.ReadFile(a.Path)
+	path := workdir.Resolve(ctx, a.Path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
@@ -63,7 +65,7 @@ func (Edit) Execute(_ context.Context, args json.RawMessage) (string, error) {
 	}
 
 	new := strings.Replace(old, a.Old, a.New, 1)
-	if err := os.WriteFile(a.Path, []byte(new), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(new), 0o644); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
 

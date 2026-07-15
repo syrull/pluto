@@ -323,7 +323,7 @@ func (m model) modelStatus() string {
 		add(styleStatusGit.Render(raw), raw)
 	}
 
-	if cwd := shortCwd(); cwd != "" {
+	if cwd := shortCwdOf(m.activeCwd()); cwd != "" {
 		reserved := len([]rune(strings.Join(plain, " · ")))
 		if m.busy {
 			reserved += len([]rune(workingLabel + " · "))
@@ -345,11 +345,19 @@ func (m model) modelStatus() string {
 	return line
 }
 
-// shortCwd returns the working directory with the home prefix collapsed to "~",
-// or "" if it can't be determined.
+// shortCwd returns the process working directory with the home prefix collapsed
+// to "~", or "" if it can't be determined.
 func shortCwd() string {
 	dir, err := os.Getwd()
-	if err != nil || dir == "" {
+	if err != nil {
+		return ""
+	}
+	return shortCwdOf(dir)
+}
+
+// shortCwdOf collapses dir's home prefix to "~", returning "" for an empty dir.
+func shortCwdOf(dir string) string {
+	if dir == "" {
 		return ""
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {

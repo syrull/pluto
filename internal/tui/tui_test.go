@@ -471,16 +471,16 @@ func TestHandleCommandNewClearsTranscript(t *testing.T) {
 	ag := &agent.Agent{}
 	m := &model{agent: ag, lines: []entry{{text: "a"}, {text: "b"}, {text: "c"}}, streamText: "x", streamThink: "y"}
 
-	status, cmd := m.handleCommand("/new")
+	status, _ := m.handleCommand("/new")
 
-	if cmd != nil {
-		t.Fatalf("handleCommand(/new) should return nil cmd, got %v", cmd)
-	}
 	if status != "" {
 		t.Fatalf("handleCommand(/new) should not push to transcript, got %q", status)
 	}
 	if !strings.Contains(m.notice, "new conversation") {
 		t.Fatalf("notice = %q, should contain 'new conversation'", m.notice)
+	}
+	if !m.showHome {
+		t.Fatal("/new should reopen the dashboard for the cleared agent")
 	}
 	if len(m.lines) != 0 {
 		t.Fatalf("lines not cleared, got %d lines", len(m.lines))

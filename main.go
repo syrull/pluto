@@ -108,14 +108,40 @@ func main() {
 	reg.MustRegister(tools.Find{})
 
 	provider := selectProvider()
+	gate := buildGate()
+	systemPrompt := buildSystemPrompt(reg)
 
-	ag := agent.New(provider, reg, buildSystemPrompt(reg),
-		agent.WithGate(buildGate()),
-		agent.WithContextLimit(contextLimit()),
-	)
-	if _, err := tui.New(ag, buildLoginHook(ag)).Run(); err != nil {
+	// newAgent builds a fresh agent for each workspace: same provider, tools, gate,
+	// and system prompt, but an independent transcript so agents run in parallel.
+	newAgent := func() *agent.Agent {
+		return agent.New(provider, reg, systemPrompt,
+			agent.WithGate(gate),
+			agent.WithContextLimit(contextLimit()),
+		)
+	}
+	ag := newAgent()
+	if _, err := tui.New(ag, newAgent, buildSummarizer(), buildLoginHook(ag)).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
+	}
+}
+
+// buildSummarizer returns a cheap one-shot summarizer (used to auto-label agents)
+// backed by the judge model, or nil when it can't authenticate so the TUI falls
+// back to deriving labels from the first message.
+func buildSummarizer() func(context.Context, string) (string, error) {
+	p, err := anthropic.New(judgeModel())
+	if err != nil {
+		return nil
+	}
+	p.SetWebSearchMaxUses(0)
+	p.SetThinkLevel(llm.ThinkNone)
+	return func(ctx context.Context, prompt string) (string, error) {
+		resp, err := p.Generate(ctx, []llm.Message{{Role: llm.RoleUser, Content: prompt}}, nil)
+		if err != nil {
+			return "", err
+		}
+		return resp.Text, nil
 	}
 }
 

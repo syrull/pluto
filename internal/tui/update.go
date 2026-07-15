@@ -13,30 +13,67 @@ import (
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
-func listen(ch chan eventMsg) tea.Cmd {
+// listen delivers the next event from a workspace's stream, tagging it (and the
+// terminating doneMsg) with the workspace id so the UI routes it correctly.
+func listen(id int, ch chan eventMsg) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
 		if !ok {
-			return doneMsg{}
+			return doneMsg{id: id}
 		}
 		return ev
 	}
 }
 
+// runAgent starts the active workspace's agent on input, scoping its tools and
+// the review gate to that agent's working directory and tagging its events with
+// the agent id so background runs stay independent.
 func (m *model) runAgent(input string, attachments []llm.Attachment) tea.Cmd {
+	id := m.activeID()
+	ag := m.agent
 	ch := make(chan eventMsg, 16)
 	m.events = ch
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(workdir.With(context.Background(), m.activeCwd()))
 	m.cancel = cancel
 	go func() {
 		defer close(ch)
-		_, _ = m.agent.Run(ctx, input, attachments, func(ev agent.Event) {
-			ch <- eventMsg(ev)
+		_, _ = ag.Run(ctx, input, attachments, func(ev agent.Event) {
+			ch <- eventMsg{id: id, Kind: ev.Kind, Text: ev.Text, Tool: ev.Tool}
 		})
 	}()
-	return listen(ch)
+	return listen(id, ch)
+}
+
+// applyEvent renders one agent Event into the current (active or swapped-in)
+// workspace state, returning an optional follow-up command. A write/edit result
+// refreshes the sidebar so file mutations show up live.
+func (m *model) applyEvent(ev agent.Event) tea.Cmd {
+	var extra tea.Cmd
+	switch ev.Kind {
+	case "text_delta":
+		m.streamText += ev.Text
+	case "thinking_delta":
+		m.streamThink += ev.Text
+	case "tool_review":
+		m.flushStream()
+		m.pushText(renderToolReview(m.contentWidth(), ev.Text))
+	case "tool_call":
+		m.flushStream()
+		m.pendingTool = ev.Tool
+		m.pendingArgs = ev.Text
+		m.pushText(renderToolCall(m.contentWidth(), ev.Tool, ev.Text))
+	case "tool_result":
+		if ev.Tool == "write" || ev.Tool == "edit" {
+			extra = m.gatherGit()
+		}
+		m.appendToolResult(ev)
+	default:
+		m.pushText(renderEvent(m.contentWidth(), ev))
+	}
+	return extra
 }
 
 // interrupt aborts the in-flight Run: it cancels the request context (stopping
@@ -52,10 +89,45 @@ func (m *model) interrupt() {
 	m.notice = "✗ canceled request"
 }
 
+// finishTurn wraps up a completed run for the current (active or swapped-in)
+// workspace: it clears run state, requests an auto-label after the first turn,
+// and refreshes git. It does NOT start the steered follow-up itself — it returns
+// any messages steered in as the run ended so the caller can persist (autosave)
+// before restartSteering starts a new goroutine, avoiding a Snapshot/Run race.
+func (m *model) finishTurn() ([]agent.SteerMessage, tea.Cmd) {
+	m.flushStream()
+	m.busy = false
+	m.events = nil
+	m.cancel = nil
+	label := m.maybeLabel(m.active)
+	pending := m.agent.TakeSteering()
+	m.syncViewport()
+	// Refresh the sidebar to reflect any files the turn changed.
+	return pending, tea.Batch(m.gatherGit(), label)
+}
+
+// restartSteering continues the conversation with messages that were steered in
+// as the previous run ended, carrying along any attachments. It must run in the
+// owning workspace's context (m.active pointing at it) so the follow-up run uses
+// that agent's directory and id.
+func (m *model) restartSteering(pending []agent.SteerMessage) tea.Cmd {
+	m.busy = true
+	texts := make([]string, 0, len(pending))
+	var atts []llm.Attachment
+	for _, p := range pending {
+		texts = append(texts, p.Text)
+		atts = append(atts, p.Attachments...)
+	}
+	cmd := m.runAgent(strings.Join(texts, "\n\n"), atts)
+	m.syncViewport()
+	return cmd
+}
+
 func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	fields := strings.Fields(line)
 	switch fields[0] {
 	case "/new":
+		// Clears only the active agent's conversation; other agents keep running.
 		m.agent.Reset()
 		m.lines = nil
 		m.outputs = nil
@@ -65,8 +137,14 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.streamText = ""
 		m.streamThink = ""
 		m.sessionName = ""
+		if w := m.workspaceAt(m.active); w != nil {
+			w.label = ""
+			w.labeled = false
+		}
+		m.showHome = true
+		m.orbitEpoch++
 		m.notice = "✓ started a new conversation"
-		return "", nil
+		return "", orbitTick(m.orbitEpoch)
 
 	case "/dash":
 		m.showHome = true
@@ -99,8 +177,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			m.pickerKind = pickerResume
 			return "", nil
 		}
-		m.resume(fields[1])
-		return "", nil
+		return "", m.resume(fields[1])
 
 	case "/login":
 		if m.login == nil {
@@ -283,7 +360,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.SetWidth(inW)
 		}
 		if m.tree == nil {
-			m.tree = newFileTree()
+			m.tree = newFileTree(m.activeCwd())
 			if m.tree != nil && m.gitReady {
 				m.tree.SetStatus(m.buildStatusStyles())
 				m.changes = m.buildChangesList()
@@ -346,7 +423,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				kind := m.pickerKind
 				m.picker = nil
 				m.pickerKind = pickerNone
-				m.applyPick(kind, target)
+				return m, m.applyPick(kind, target)
 			case "esc":
 				m.picker = nil
 				m.pickerKind = pickerNone
@@ -483,10 +560,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 				return m, nil
 			}
-			// Slash commands (e.g. /image) act on the session, not the model, and
-			// don't consume staged attachments; render the raw line without a chip.
+			// Most slash commands are TUI actions, not messages to the agent, so
+			// they're dispatched without echoing the command text into the
+			// transcript; only any command status/output is shown. /image is the
+			// exception: it composes the next message by staging an attachment, so
+			// it still echoes as a user line (rendered without a chip).
 			if strings.HasPrefix(in, "/") {
-				m.pushText(m.renderUserLine(in))
+				if strings.Fields(in)[0] == "/image" {
+					m.pushText(m.renderUserLine(in))
+				}
 				m.input.Reset()
 				status, cmd := m.handleCommand(in)
 				if status != "" {
@@ -514,35 +596,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case eventMsg:
-		ev := agent.Event(msg)
-		var extra tea.Cmd
-		switch ev.Kind {
-		case "text_delta":
-			m.streamText += ev.Text
-		case "thinking_delta":
-			m.streamThink += ev.Text
-		case "tool_review":
-			m.flushStream()
-			m.pushText(renderToolReview(m.contentWidth(), ev.Text))
-		case "tool_call":
-			m.flushStream()
-			m.pendingTool = ev.Tool
-			m.pendingArgs = ev.Text
-			m.pushText(renderToolCall(m.contentWidth(), ev.Tool, ev.Text))
-		case "tool_result":
-			// Refresh the sidebar so file mutations show up live in the tree/changes.
-			if ev.Tool == "write" || ev.Tool == "edit" {
-				extra = gatherGitCmd
+		ev := msg.event()
+		i := m.workspaceIndex(msg.id)
+		switch {
+		case len(m.workspaces) == 0: // bare/test model: apply directly
+			extra := m.applyEvent(ev)
+			m.syncViewport()
+			if extra != nil {
+				return m, tea.Batch(listen(msg.id, m.events), extra)
 			}
-			m.appendToolResult(ev)
+			return m, listen(msg.id, m.events)
+		case i < 0:
+			return m, nil // stale event from a workspace that no longer exists
+		case i == m.active:
+			extra := m.applyEvent(ev)
+			m.syncViewport()
+			if extra != nil {
+				return m, tea.Batch(listen(msg.id, m.events), extra)
+			}
+			return m, listen(msg.id, m.events)
 		default:
-			m.pushText(renderEvent(m.contentWidth(), ev))
+			// Background agent: render into its own state and flag unread progress.
+			ws := m.workspaces[i]
+			m.onWorkspace(i, func() { m.applyEvent(ev) })
+			ws.unread = true
+			return m, listen(msg.id, ws.events)
 		}
-		m.syncViewport()
-		if extra != nil {
-			return m, tea.Batch(listen(m.events), extra)
-		}
-		return m, listen(m.events)
 
 	case bashInlineMsg:
 		// Drop a result from a canceled or superseded inline run.
@@ -552,32 +631,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyInlineResult(msg)
 		m.syncViewport()
 		// An inline command can mutate the tree and branch; refresh the sidebar.
-		return m, gatherGitCmd
+		return m, m.gatherGit()
 
 	case doneMsg:
-		m.flushStream()
-		m.busy = false
-		m.events = nil
-		m.cancel = nil
-		m.autosave()
-		// A message steered in as the run was ending wasn't folded into it;
-		// continue the conversation with it as the next turn, carrying any
-		// attachments that rode along with the steered messages.
-		if pending := m.agent.TakeSteering(); len(pending) > 0 {
-			m.busy = true
-			texts := make([]string, 0, len(pending))
-			var atts []llm.Attachment
-			for _, p := range pending {
-				texts = append(texts, p.Text)
-				atts = append(atts, p.Attachments...)
+		i := m.workspaceIndex(msg.id)
+		switch {
+		case len(m.workspaces) == 0, i == m.active: // bare/test model or the active agent
+			pending, cmd := m.finishTurn()
+			// Autosave before any restarted goroutine so Snapshot never races Run.
+			m.autosave()
+			if len(pending) > 0 {
+				cmd = tea.Batch(cmd, m.restartSteering(pending))
 			}
-			cmd := m.runAgent(strings.Join(texts, "\n\n"), atts)
-			m.syncViewport()
-			return m, tea.Batch(cmd, gatherGitCmd)
+			return m, cmd
+		case i < 0:
+			return m, nil
+		default:
+			var pending []agent.SteerMessage
+			var cmd tea.Cmd
+			m.onWorkspace(i, func() { pending, cmd = m.finishTurn() })
+			m.workspaces[i].unread = true
+			// autosave runs here (active restored) so it records the real active,
+			// and before restartSteering starts the follow-up run's goroutine.
+			m.autosave()
+			if len(pending) > 0 {
+				var rcmd tea.Cmd
+				m.onWorkspace(i, func() { rcmd = m.restartSteering(pending) })
+				cmd = tea.Batch(cmd, rcmd)
+			}
+			return m, cmd
 		}
-		m.syncViewport()
-		// Refresh the sidebar to reflect any files the turn changed.
-		return m, gatherGitCmd
 	case loginDoneMsg:
 		m.busy = false
 		m.loginFlow = nil
@@ -634,15 +717,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.orbitFrame = (m.orbitFrame + 1) % widgets.OrbitSteps
 		return m, orbitTick(m.orbitEpoch)
 	case gitInfoMsg:
-		m.git = gitInfo(msg)
-		m.gitReady = true
-		if m.tree != nil {
-			m.tree.SetStatus(m.buildStatusStyles())
-		}
-		m.changes = m.buildChangesList()
-		if m.changes == nil && m.focus == paneChanges {
-			m.focus = paneTree
-		}
+		m.applyGitInfo(msg)
 		return m, nil
 	case editorDoneMsg:
 		// The editor may have changed the file; refresh a still-open file/diff
@@ -651,7 +726,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openFileDiff(m.modalPath)
 		}
 		if msg.err == nil {
-			return m, gatherGitCmd
+			return m, m.gatherGit()
+		}
+		return m, nil
+	case labelMsg:
+		if i := m.workspaceIndex(msg.id); i >= 0 && strings.TrimSpace(msg.label) != "" {
+			m.workspaces[i].label = msg.label
 		}
 		return m, nil
 	}
@@ -754,8 +834,9 @@ func (m *model) startGHConversation(prompt, label string) tea.Cmd {
 	return cmd
 }
 
-// applyPick applies a picker selection, surfacing a transient notice.
-func (m *model) applyPick(kind pickerKind, target string) {
+// applyPick applies a picker selection, surfacing a transient notice and, for
+// the new-agent picker, returning the command that spawns the workspace.
+func (m *model) applyPick(kind pickerKind, target string) tea.Cmd {
 	switch kind {
 	case pickerModel:
 		if sw, ok := m.agent.Switcher(); ok {
@@ -768,8 +849,11 @@ func (m *model) applyPick(kind pickerKind, target string) {
 			m.notice = thinkNotice(th.ThinkLevel())
 		}
 	case pickerResume:
-		m.resume(target)
+		return m.resume(target)
+	case pickerNewAgent:
+		return m.applyNewAgentPick(target)
 	}
+	return nil
 }
 
 func pickerStyle() widgets.ListStyle {
@@ -785,6 +869,15 @@ func newResumePicker(metas []session.Meta) *widgets.ListPicker {
 		"resume conversation — ↑/↓ move · enter resume · esc cancel",
 		items,
 		"",
+		pickerStyle(),
+	)
+}
+
+func newNewAgentPicker() *widgets.ListPicker {
+	return widgets.NewListPicker(
+		"new agent — ↑/↓ move · enter select · esc cancel",
+		[]string{worktreeOption, currentDirOption},
+		worktreeOption,
 		pickerStyle(),
 	)
 }

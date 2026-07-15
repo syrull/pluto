@@ -35,6 +35,19 @@ pluto update
 
 Check the current version with `pluto version`.
 
+## Multi-agent workspace
+
+The right sidebar has an **Agents** pane listing independent conversations that
+run in parallel. Tab reaches it; `↑/↓` move, `↵` switches, `n` (or the
+`＋ new agent` row) creates one. A new agent opens on a fresh dashboard and can
+run in its own **git worktree** so parallel agents don't clobber each other —
+switching between them never interrupts a running turn. The **Files**,
+**Changes**, and **Agents** panes are collapsible with `-` (expanded by
+default), and the Files tree, Changes list, fuzzy finder, and dashboard all
+follow the active agent's directory. `/new` clears only the active agent, and
+agents (with their transcripts and worktrees) persist across restarts via
+`/save` and `/resume`.
+
 ## Releases
 
 Releases are published automatically from `main`. Every push bumps the patch

@@ -133,6 +133,26 @@ func TestImageCommandDoesNotConsumeStaged(t *testing.T) {
 	}
 }
 
+// TestImageCommandEchoedIntoTranscript documents the exception to the #55 fix:
+// unlike other slash commands, /image composes the next message by staging an
+// attachment, so it is echoed into the transcript as a user line.
+func TestImageCommandEchoedIntoTranscript(t *testing.T) {
+	path := writePNG(t, t.TempDir())
+	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "")
+	var tm tea.Model = model{agent: ag, md: newRenderer(80), input: newInput(80)}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	for _, r := range "/image " + path {
+		tm, _ = tm.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := tm.(model)
+
+	if joined := got.transcript(); !strings.Contains(joined, "/image") {
+		t.Fatalf("/image should echo into the transcript as a user line, got:\n%s", joined)
+	}
+}
+
 func TestAttachmentChip(t *testing.T) {
 	if got := attachmentChip(nil); got != "" {
 		t.Fatalf("no attachments = %q, want empty", got)
