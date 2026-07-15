@@ -71,10 +71,24 @@ func (m *model) buildSession(name string) *session.Session {
 		ID:       name,
 		Title:    title,
 		Model:    m.agent.ProviderName(),
+		Cwd:      m.sessionCwd(),
 		Messages: agents[active].Messages,
 		Agents:   agents,
 		Active:   active,
 	}
+}
+
+// sessionCwd is the folder a conversation is scoped to for /resume: the launch
+// (primary) workspace's directory, falling back to the process cwd for the
+// bare/test model.
+func (m *model) sessionCwd() string {
+	if len(m.workspaces) > 0 && m.workspaces[0].cwd != "" {
+		return m.workspaces[0].cwd
+	}
+	if d, err := os.Getwd(); err == nil {
+		return d
+	}
+	return ""
 }
 
 // save writes the current agents to the sessions dir, reusing name when given,

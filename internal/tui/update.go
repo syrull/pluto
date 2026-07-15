@@ -171,20 +171,32 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		if err != nil {
 			return styleErr.Render("✗ sessions unavailable: " + err.Error()), nil
 		}
-		if len(fields) == 1 {
-			metas, err := store.List()
+		arg := ""
+		if len(fields) > 1 {
+			arg = fields[1]
+		}
+		if arg == "" || arg == "--all" || arg == "-a" {
+			all := arg != ""
+			metas, err := store.ListForCwd(m.sessionCwd())
+			if all {
+				metas, err = store.List()
+			}
 			if err != nil {
 				return styleErr.Render("✗ " + err.Error()), nil
 			}
 			if len(metas) == 0 {
-				return styleHint.Render("no saved conversations yet — use /save first"), nil
+				hint := "no saved conversations for this folder — use /save, or /resume --all to list every folder"
+				if all {
+					hint = "no saved conversations yet — use /save first"
+				}
+				return styleHint.Render(hint), nil
 			}
 			m.picker = newResumePicker(metas)
 			m.picker.SetSize(m.width, m.height)
 			m.pickerKind = pickerResume
 			return "", nil
 		}
-		return "", m.resume(fields[1])
+		return "", m.resume(arg)
 
 	case "/login":
 		if m.login == nil {

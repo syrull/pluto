@@ -198,6 +198,41 @@ func TestListSkipsUnreadableAndSortsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestListForCwdScopesByPath(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+	store, _ := Open()
+
+	if err := store.Save(&Session{ID: "here", Cwd: "/work/here", Messages: sampleMessages()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(&Session{ID: "there", Cwd: "/work/there", Messages: sampleMessages()}); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy session with no recorded path must never be hidden.
+	if err := store.Save(&Session{ID: "legacy", Messages: sampleMessages()}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.ListForCwd("/work/here/")
+	if err != nil {
+		t.Fatalf("ListForCwd: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, m := range got {
+		ids[m.ID] = true
+	}
+	if !ids["here"] || !ids["legacy"] {
+		t.Fatalf("ListForCwd(/work/here) should include the folder's session and legacy, got %v", ids)
+	}
+	if ids["there"] {
+		t.Fatalf("ListForCwd(/work/here) must not include another folder's session, got %v", ids)
+	}
+
+	if all, _ := store.ListForCwd(""); len(all) != 3 {
+		t.Fatalf("ListForCwd(\"\") should return every session, got %d", len(all))
+	}
+}
+
 func TestListMissingDirIsEmpty(t *testing.T) {
 	t.Setenv("PLUTO_SESSIONS_DIR", filepath.Join(t.TempDir(), "does-not-exist"))
 	store := &Store{dir: Dir()}
