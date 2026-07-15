@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/llm"
 )
 
@@ -93,6 +94,7 @@ func Open() (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("session: create dir %q: %w", dir, err)
 	}
+	debug.Debug("session", "store opened", "dir", dir)
 	return &Store{dir: dir}, nil
 }
 
@@ -135,6 +137,8 @@ func (s *Store) Save(sess *Session) error {
 	if err := os.Rename(tmpName, s.path(sess.ID)); err != nil {
 		return fmt.Errorf("session: rename: %w", err)
 	}
+	debug.Info("session", "saved", "id", sess.ID, "path", s.path(sess.ID),
+		"agents", len(sess.Agents), "messages", len(sess.Messages))
 	return nil
 }
 
@@ -147,18 +151,24 @@ func (s *Store) Load(id string) (*Session, error) {
 	}
 	data, err := os.ReadFile(s.path(id))
 	if errors.Is(err, os.ErrNotExist) {
+		debug.Debug("session", "load miss", "id", id)
 		return nil, ErrNotFound
 	}
 	if err != nil {
+		debug.Warn("session", "read failed", "id", id, "err", err)
 		return nil, fmt.Errorf("session: read %q: %w", id, err)
 	}
 	var sess Session
 	if err := json.Unmarshal(data, &sess); err != nil {
+		debug.Warn("session", "corrupt file", "id", id, "err", err)
 		return nil, fmt.Errorf("session: %q is not a valid session file: %w", id, err)
 	}
 	if sess.Version == 0 || sess.Version > formatVersion {
+		debug.Warn("session", "unsupported version", "id", id, "version", sess.Version)
 		return nil, fmt.Errorf("session: %q has unsupported format version %d", id, sess.Version)
 	}
+	debug.Info("session", "loaded", "id", id, "version", sess.Version,
+		"agents", len(sess.Agents), "messages", len(sess.Messages), "active", sess.Active)
 	return &sess, nil
 }
 

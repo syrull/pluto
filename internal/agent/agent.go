@@ -205,7 +205,7 @@ func (a *Agent) injectSteering() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, msg := range msgs {
-		debug.Logf("agent", "steer input=%q attachments=%d", truncate(msg.Text, 256), len(msg.Attachments))
+		debug.Debug("agent", "steer", "input", truncate(msg.Text, 256), "attachments", len(msg.Attachments))
 		a.transcript = append(a.transcript, llm.Message{
 			Role: llm.RoleUser, Content: msg.Text, Attachments: msg.Attachments,
 		})
@@ -275,13 +275,15 @@ func (a *Agent) specs() []llm.ToolSpec {
 
 // Run processes one user input (with optional attachments) to completion.
 func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachment, emit func(Event)) (string, error) {
-	debug.Logf("agent", "run input=%q attachments=%d provider=%s", truncate(input, 256), len(attachments), a.provider.Name())
+	debug.Info("agent", "run start", "input", truncate(input, 256), "attachments", len(attachments), "provider", a.provider.Name())
+	runTimer := debug.NewTimer("agent", "run done")
 	a.appendMessages(llm.Message{Role: llm.RoleUser, Content: input, Attachments: attachments})
 	a.trimTranscript()
 
 	for step := range maxSteps {
-		debug.Logf("agent", "step %d/%d", step+1, maxSteps)
+		debug.Debug("agent", "step", "n", step+1, "max", maxSteps)
 		if err := ctx.Err(); err != nil {
+			runTimer.Stop("outcome", "canceled", "step", step+1)
 			return "", err
 		}
 		// Fold in any user messages queued since the previous step so the model
@@ -290,13 +292,15 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 
 		resp, streamed, err := a.generate(ctx, emit)
 		if err != nil {
-			debug.Logf("agent", "generate error: %v", err)
+			debug.Warn("agent", "generate error", "err", err)
 			// A canceled run unwinds quietly: the UI already knows and a spurious
 			// error line would only add noise.
 			if ctx.Err() != nil {
+				runTimer.Stop("outcome", "canceled", "step", step+1)
 				return "", ctx.Err()
 			}
 			emit(Event{Kind: "error", Text: err.Error()})
+			runTimer.Stop("outcome", "error", "step", step+1)
 			return "", err
 		}
 
@@ -304,7 +308,7 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 		// reached the UI via deltas, so only emit a final "text" event on the
 		// non-streaming path.
 		if len(resp.ToolCalls) == 0 {
-			debug.Logf("agent", "final reply (%d chars, streamed=%t)", len(resp.Text), streamed)
+			debug.Info("agent", "final reply", "chars", len(resp.Text), "streamed", streamed)
 			a.appendMessages(llm.Message{
 				Role: llm.RoleModel, Content: resp.Text,
 				Thinking: resp.Thinking, ThinkingSig: resp.ThinkingSig,
@@ -317,12 +321,13 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 			if a.hasSteering() {
 				continue
 			}
+			runTimer.Stop("outcome", "reply", "step", step+1)
 			return resp.Text, nil
 		}
 
 		// Record the assistant tool-use turn verbatim (thinking first, then any
 		// leading text) so the provider can replay it on the next request.
-		debug.Logf("agent", "model requested %d tool call(s)", len(resp.ToolCalls))
+		debug.Debug("agent", "model requested tool calls", "count", len(resp.ToolCalls))
 		a.appendMessages(llm.Message{
 			Role: llm.RoleModel, Content: resp.Text, ToolCalls: resp.ToolCalls,
 			Thinking: resp.Thinking, ThinkingSig: resp.ThinkingSig,
@@ -344,11 +349,12 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 			}
 			if a.gate != nil {
 				rr := a.gate.Review(ctx, call)
+				debug.Debug("tool", "gate review", "tool", call.Name, "allowed", rr.Allowed, "source", rr.Source, "risk", rr.Risk)
 				if call.Name == "bash" && rr.Source != "off" {
 					emit(Event{Kind: "tool_review", Tool: call.Name, Text: reviewLine(rr)})
 				}
 				if !rr.Allowed {
-					debug.Logf("tool", "%s refused by gate (%s): %s", call.Name, rr.Source, rr.Reason)
+					debug.Warn("tool", "refused by gate", "tool", call.Name, "source", rr.Source, "reason", rr.Reason)
 					emit(Event{Kind: "tool_call", Tool: call.Name, Text: string(call.Args)})
 					result := fmt.Sprintf("refused by auto mode (%s): %s", rr.Source, rr.Reason)
 					emit(Event{Kind: "error", Tool: call.Name, Text: result})
@@ -359,22 +365,27 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 				}
 			}
 
-			debug.Logf("tool", "invoke %s args=%s", call.Name, truncate(string(call.Args), 512))
+			debug.Debug("tool", "invoke", "tool", call.Name, "args", truncate(string(call.Args), 512))
 			emit(Event{Kind: "tool_call", Tool: call.Name, Text: string(call.Args)})
 
+			toolTimer := debug.NewTimer("tool", "result")
 			result, err := a.registry.Invoke(ctx, call.Name, call.Args)
 			if err != nil && ctx.Err() != nil {
 				// Canceled mid-tool: record canceled results for this and every
 				// remaining call, then unwind quietly.
+				toolTimer.Stop("tool", call.Name, "outcome", "canceled")
 				a.recordCanceled(resp.ToolCalls[i:])
+				runTimer.Stop("outcome", "canceled", "step", step+1)
 				return "", ctx.Err()
 			}
 			if err != nil {
-				debug.Logf("tool", "%s failed: %v", call.Name, err)
+				debug.Warn("tool", "failed", "tool", call.Name, "err", err)
+				toolTimer.Stop("tool", call.Name, "outcome", "error")
 				result = "error: " + err.Error()
 				emit(Event{Kind: "error", Tool: call.Name, Text: err.Error()})
 			} else {
-				debug.Logf("tool", "%s ok result=%s", call.Name, truncate(result, 512))
+				debug.Debug("tool", "ok", "tool", call.Name, "result", truncate(result, 512))
+				toolTimer.Stop("tool", call.Name, "outcome", "ok", "chars", len(result))
 				emit(Event{Kind: "tool_result", Tool: call.Name, Text: result})
 			}
 			a.appendMessages(llm.Message{
@@ -383,9 +394,10 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 		}
 	}
 
-	debug.Logf("agent", "step budget exhausted after %d steps", maxSteps)
+	debug.Warn("agent", "step budget exhausted", "steps", maxSteps)
 	err := fmt.Errorf("agent: exceeded %d steps without completing", maxSteps)
 	emit(Event{Kind: "error", Text: err.Error()})
+	runTimer.Stop("outcome", "step-budget-exhausted", "steps", maxSteps)
 	return "", err
 }
 
@@ -477,7 +489,7 @@ func (a *Agent) trimTranscriptLocked() {
 	trimmed := make([]llm.Message, 0, len(head)+len(a.transcript)-keepFrom)
 	trimmed = append(trimmed, head...)
 	trimmed = append(trimmed, a.transcript[keepFrom:]...)
-	debug.Logf("agent", "trimmed transcript %d→%d msgs (budget %d tok)", len(a.transcript), len(trimmed), budget)
+	debug.Debug("agent", "trimmed transcript", "from", len(a.transcript), "to", len(trimmed), "budget_tok", budget)
 	a.transcript = trimmed
 }
 
@@ -513,7 +525,8 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 		}
 	}()
 	if sp, ok := a.provider.(llm.StreamingProvider); ok {
-		debug.Logf("llm", "GenerateStream: %d msg(s), %d tool spec(s)", len(a.transcript), len(a.specs()))
+		debug.Debug("llm", "GenerateStream request", "messages", len(a.transcript), "tools", len(a.specs()), "model", a.provider.Name())
+		t := debug.NewTimer("llm", "GenerateStream done")
 		resp, err = sp.GenerateStream(ctx, a.transcript, a.specs(), func(d llm.StreamDelta) {
 			switch d.Kind {
 			case llm.DeltaText:
@@ -526,12 +539,15 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 				emit(Event{Kind: "tool_result", Tool: d.Tool, Text: d.Text})
 			}
 		})
-		debug.Logf("llm", "GenerateStream done: text=%d chars, tools=%d, err=%v", len(resp.Text), len(resp.ToolCalls), err)
+		t.Stop("chars", len(resp.Text), "tools", len(resp.ToolCalls),
+			"in_tok", resp.Usage.InputTokens, "out_tok", resp.Usage.OutputTokens, "err", errText(err))
 		return resp, true, err
 	}
-	debug.Logf("llm", "Generate: %d msg(s), %d tool spec(s)", len(a.transcript), len(a.specs()))
+	debug.Debug("llm", "Generate request", "messages", len(a.transcript), "tools", len(a.specs()), "model", a.provider.Name())
+	t := debug.NewTimer("llm", "Generate done")
 	resp, err = a.provider.Generate(ctx, a.transcript, a.specs())
-	debug.Logf("llm", "Generate done: text=%d chars, tools=%d, err=%v", len(resp.Text), len(resp.ToolCalls), err)
+	t.Stop("chars", len(resp.Text), "tools", len(resp.ToolCalls),
+		"in_tok", resp.Usage.InputTokens, "out_tok", resp.Usage.OutputTokens, "err", errText(err))
 	// Non-streaming providers can't interleave; surface any server-side tool
 	// use (e.g. web search) after the turn returns.
 	if err == nil {
@@ -541,6 +557,14 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 		}
 	}
 	return resp, false, err
+}
+
+// errText renders an error for a log field, or "" for nil so a clean turn logs err="".
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // reviewLine renders a gate verdict as a concise one-line summary for the UI.

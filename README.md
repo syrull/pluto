@@ -48,6 +48,52 @@ follow the active agent's directory. `/new` clears only the active agent, and
 agents (with their transcripts and worktrees) persist across restarts via
 `/save` and `/resume`.
 
+## Debugging
+
+Pluto can record a structured, timestamped log of *everything* that happens in a
+session — invocation details, every subsystem event, and (optionally) every TUI
+frame render — so a graphical glitch or a subtle behavioral bug can be
+reconstructed after the fact. The log is designed to be handed straight to an AI
+agent for diagnosis.
+
+Enable it with an environment variable and pluto prints where it's writing:
+
+```sh
+PLUTO_DEBUG=1 pluto
+# pluto: debug logging to pluto-debug.log
+```
+
+Each line looks like `HH:MM:SS.ffffff LEVEL [component] message key=value …`,
+e.g. `[tui] update key key=tab` followed by the resulting `[tui] state …`. Keys
+are emitted in a fixed order so two runs can be diffed. **Secrets (OAuth tokens,
+API keys, auth headers) are never written** — they are redacted in the auth path.
+
+### Configuration
+
+| Variable | Values | Default | Purpose |
+| --- | --- | --- | --- |
+| `PLUTO_DEBUG` | `1`/`true`/`on` | off | Master switch. When off, logging is a no-op. |
+| `PLUTO_DEBUG_FILE` | path | `pluto-debug.log` | Where the log is appended. |
+| `PLUTO_DEBUG_LEVEL` | `trace`\|`debug`\|`info`\|`warn`\|`error` | `debug` | Minimum severity. `trace` unlocks the per-frame render firehose. |
+| `PLUTO_DEBUG_COMPONENTS` | comma list, `-` to exclude | all | Filter by subsystem, e.g. `tui,agent` (only those) or `-llm` (all but llm). |
+| `PLUTO_DEBUG_FRAMES` | `off`\|`coalesced`\|`full` | `coalesced` | UI frame logging (needs `trace`). `coalesced` collapses identical frames to `frame unchanged repeated=N`; `full` also dumps the rendered screen. |
+
+Components include: `lifecycle`, `reposcan`, `tui`, `agent`, `tool`, `llm`,
+`session`, `auth`, `policy`, `judge`, `guard`, `update`.
+
+### Capturing a log for an issue
+
+To trace a graphical bug frame by frame without drowning in LLM payloads:
+
+```sh
+PLUTO_DEBUG=1 PLUTO_DEBUG_LEVEL=trace PLUTO_DEBUG_COMPONENTS=tui \
+  PLUTO_DEBUG_FILE=/tmp/pluto-bug.log pluto
+```
+
+Reproduce the glitch, quit, then attach `/tmp/pluto-bug.log` to the issue (skim
+it first to confirm it contains nothing sensitive — it shouldn't). The file is
+appended across runs, so start from a fresh path per capture.
+
 ## Releases
 
 Releases are published automatically from `main`. Every push bumps the patch
