@@ -534,8 +534,10 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 			case llm.DeltaThinking:
 				emit(Event{Kind: "thinking_delta", Text: d.Text})
 			case llm.DeltaServerToolCall:
+				debug.Debug("tool", "server tool call", "tool", d.Tool, "args", truncate(d.Text, 512))
 				emit(Event{Kind: "tool_call", Tool: d.Tool, Text: d.Text})
 			case llm.DeltaServerToolResult:
+				debug.Debug("tool", "server tool result", "tool", d.Tool, "chars", len(d.Text), "result", truncate(d.Text, 512))
 				emit(Event{Kind: "tool_result", Tool: d.Tool, Text: d.Text})
 			}
 		})
@@ -552,6 +554,8 @@ func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Respon
 	// use (e.g. web search) after the turn returns.
 	if err == nil {
 		for _, st := range resp.ServerToolUses {
+			debug.Debug("tool", "server tool use", "tool", st.Name,
+				"args", truncate(st.Args, 512), "result", truncate(st.Result, 512))
 			emit(Event{Kind: "tool_call", Tool: st.Name, Text: st.Args})
 			emit(Event{Kind: "tool_result", Tool: st.Name, Text: st.Result})
 		}

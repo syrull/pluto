@@ -269,13 +269,17 @@ func (m *model) createWorktree(id int) (string, error) {
 // worktree) it opens a confirmation picker.
 func (m *model) promptClose() tea.Cmd {
 	if len(m.workspaces) == 0 {
+		debug.Debug(dbgTUI, "close prompt", "outcome", "no-agent")
 		m.notice = "✗ no agent to close"
 		return nil
 	}
 	w := m.workspaces[m.active]
 	if !m.busy && !w.worktree && len(m.git.status) == 0 {
+		debug.Debug(dbgTUI, "close prompt", "outcome", "direct", "id", w.id)
 		return m.closeActiveAgent(false)
 	}
+	debug.Debug(dbgTUI, "close prompt", "outcome", "confirm", "id", w.id,
+		"busy", m.busy, "worktree", w.worktree, "dirty", len(m.git.status))
 	m.picker = newCloseAgentPicker(w.worktree)
 	m.picker.SetSize(m.width, m.height)
 	m.pickerKind = pickerCloseAgent
@@ -284,6 +288,7 @@ func (m *model) promptClose() tea.Cmd {
 
 // applyClosePick acts on the close confirmation choice.
 func (m *model) applyClosePick(target string) tea.Cmd {
+	debug.Debug(dbgTUI, "close pick", "choice", target)
 	switch target {
 	case closeCancelOption:
 		m.notice = "✗ close canceled"
@@ -314,17 +319,24 @@ func (m *model) closeActiveAgent(removeWorktree bool) tea.Cmd {
 
 	removeErr := ""
 	if removeWorktree && w.worktree && w.cwd != "" {
-		if err := removeWorktreeAt(w.cwd); err != nil {
+		path := w.cwd
+		t := debug.NewTimer(dbgTUI, "worktree remove")
+		if err := removeWorktreeAt(path); err != nil {
 			removeErr = err.Error()
+			debug.Warn(dbgTUI, "worktree remove failed", "path", path, "err", err)
+			t.Stop("path", path, "outcome", "error")
 		} else {
 			w.worktree = false
 			w.cwd = ""
+			t.Stop("path", path, "outcome", "ok")
 		}
 	}
 
 	label := m.workspaceLabel(idx)
 
 	if len(m.workspaces) == 1 {
+		debug.Info(dbgTUI, "close agent done", "id", w.id, "mode", "reset-last",
+			"worktree_removed", removeWorktree && removeErr == "")
 		return m.resetLastAgent(label, removeErr)
 	}
 
@@ -348,6 +360,8 @@ func (m *model) closeActiveAgent(removeWorktree bool) tea.Cmd {
 	m.notice = closeNotice(label, removeErr)
 	m.orbitEpoch++
 	m.syncViewport()
+	debug.Info(dbgTUI, "close agent done", "id", w.id, "mode", "switch",
+		"active", next, "remaining", len(m.workspaces), "worktree_removed", removeWorktree && removeErr == "")
 	// Drop the closed agent from the persisted session so it doesn't resume.
 	m.persistClosed()
 	cmds := []tea.Cmd{m.gatherGit()}
