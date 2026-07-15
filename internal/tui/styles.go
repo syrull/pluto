@@ -48,6 +48,11 @@ var (
 			BorderForeground(lipgloss.Color("6")).
 			Padding(0, 1)
 	styleModalTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	// Slash-command autocomplete popup: a magenta-bordered box tying it to the
+	// '/' prompt, anchored above the input.
+	styleCmdMenuBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("5"))
 
 	styleTreeBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).

@@ -82,6 +82,10 @@ type model struct {
 	picker     *widgets.ListPicker
 	pickerKind pickerKind
 
+	// cmdMenu is the open slash-command autocomplete popup, anchored above the
+	// input; nil when the buffer isn't a bare slash command.
+	cmdMenu *widgets.CommandMenu
+
 	// outputs retains full tool results; pendingTool/pendingArgs carry the
 	// in-flight tool call so its result can be titled and its content retained;
 	// modal is the open full-output viewer, if any.
