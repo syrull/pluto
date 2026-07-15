@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -64,8 +65,15 @@ type gitInfo struct {
 // gitInfoMsg delivers gathered git state to the model.
 type gitInfoMsg gitInfo
 
-// gatherGitCmd collects git state off the UI goroutine so startup isn't blocked.
-func gatherGitCmd() tea.Msg { return gitInfoMsg(gatherGit()) }
+// gatherGitCmd collects git state for the process cwd off the UI goroutine so
+// startup isn't blocked.
+func gatherGitCmd() tea.Msg { return gitInfoMsg(gatherGitIn("")) }
+
+// gatherGitCmdIn collects git state for a specific directory (an agent's cwd or
+// worktree), returning the same gitInfoMsg the active workspace consumes.
+func gatherGitCmdIn(dir string) tea.Cmd {
+	return func() tea.Msg { return gitInfoMsg(gatherGitIn(dir)) }
+}
 
 func gitRun(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -74,19 +82,28 @@ func gitRun(args ...string) (string, error) {
 	return string(out), err
 }
 
-func gatherGit() gitInfo {
+// gitRunDir runs git scoped to dir (via -C) when dir is set, else in the process cwd.
+func gitRunDir(dir string, args ...string) (string, error) {
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	return gitRun(args...)
+}
+
+// gatherGitIn collects git state for dir (empty ⇒ process cwd).
+func gatherGitIn(dir string) gitInfo {
 	var g gitInfo
-	if out, err := gitRun("rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(out) != "true" {
+	if out, err := gitRunDir(dir, "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(out) != "true" {
 		return g
 	}
 	g.isRepo = true
-	if out, err := gitRun("rev-parse", "--show-toplevel"); err == nil {
+	if out, err := gitRunDir(dir, "rev-parse", "--show-toplevel"); err == nil {
 		g.root = strings.TrimSpace(out)
 	}
-	if out, err := gitRun("branch", "--show-current"); err == nil {
+	if out, err := gitRunDir(dir, "branch", "--show-current"); err == nil {
 		g.branch = strings.TrimSpace(out)
 	}
-	if out, err := gitRun("rev-list", "--left-right", "--count", "@{upstream}...HEAD"); err == nil {
+	if out, err := gitRunDir(dir, "rev-list", "--left-right", "--count", "@{upstream}...HEAD"); err == nil {
 		if parts := strings.Fields(out); len(parts) == 2 {
 			g.behind, _ = strconv.Atoi(parts[0])
 			g.ahead, _ = strconv.Atoi(parts[1])
@@ -95,11 +112,11 @@ func gatherGit() gitInfo {
 	}
 	// -uall lists each file inside an untracked directory instead of collapsing
 	// it to a single "dir/" entry, so the Changes pane stays a flat file list.
-	if out, err := gitRun("status", "--porcelain", "-uall"); err == nil {
+	if out, err := gitRunDir(dir, "status", "--porcelain", "-uall"); err == nil {
 		g.parseStatus(out)
 		g.status = statusMap(out, g.root)
 	}
-	if out, err := gitRun("log", "-1", "--format=%h %s (%cr)"); err == nil {
+	if out, err := gitRunDir(dir, "log", "-1", "--format=%h %s (%cr)"); err == nil {
 		g.lastCommit = strings.TrimSpace(out)
 	}
 	return g
@@ -180,7 +197,7 @@ func (m model) dashboardView(width int) string {
 
 func (m model) projectRows() []widgets.DashRow {
 	var rows []widgets.DashRow
-	if cwd := shortCwd(); cwd != "" {
+	if cwd := shortCwdOf(m.activeCwd()); cwd != "" {
 		rows = append(rows, widgets.DashRow{Label: "directory", Value: cwd})
 	}
 	switch {
@@ -223,7 +240,7 @@ func (m model) sessionRows() []widgets.DashRow {
 			rows = append(rows, widgets.DashRow{Label: "context", Value: fmt.Sprintf("%d%% / %s", used*100/window, formatTokens(window))})
 		}
 	}
-	rows = append(rows, widgets.DashRow{Label: "context files", Value: contextFilesLine()})
+	rows = append(rows, widgets.DashRow{Label: "context files", Value: contextFilesLine(m.activeCwd())})
 	return rows
 }
 
@@ -242,11 +259,11 @@ func (m model) tipLine() string {
 }
 
 // contextFilesLine reports which project instruction files are present and
-// non-empty in the working directory, or "none".
-func contextFilesLine() string {
+// non-empty in dir, or "none".
+func contextFilesLine(dir string) string {
 	var found []string
 	for _, name := range dashboardContextFiles {
-		if info, err := os.Stat(name); err == nil && !info.IsDir() && info.Size() > 0 {
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() && info.Size() > 0 {
 			found = append(found, name)
 		}
 	}

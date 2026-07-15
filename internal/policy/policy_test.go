@@ -7,6 +7,7 @@ import (
 
 	"github.com/syrull/pluto/internal/judge"
 	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 func bashCall(cmd string) llm.ToolCall {
@@ -149,6 +150,40 @@ func TestLoadConfigDefaultsOn(t *testing.T) {
 	cfg = LoadConfig()
 	if cfg.Mode != ModeOff || cfg.OnJudgeError != judge.DecisionAllow || cfg.FastPath {
 		t.Fatalf("env-driven config = %+v", cfg)
+	}
+}
+
+// recordingJudge captures the last request it saw and allows everything, so tests
+// can assert what the gate forwards to the judge.
+type recordingJudge struct{ last judge.Request }
+
+func (r *recordingJudge) Assess(_ context.Context, req judge.Request) (judge.Verdict, error) {
+	r.last = req
+	return judge.Verdict{Decision: judge.DecisionAllow, Risk: "low"}, nil
+}
+
+func TestReviewThreadsWorktreeCwdToJudge(t *testing.T) {
+	rj := &recordingJudge{}
+	g := newGate(t, rj, func(c *Config) { c.FastPath = false })
+
+	ctx := workdir.With(context.Background(), "/tmp/pluto-agent-2")
+	rr := g.Review(ctx, bashCall("go test ./..."))
+	if !rr.Allowed {
+		t.Fatalf("a worktree-scoped command should be allowed, got %+v", rr)
+	}
+	if rj.last.Cwd != "/tmp/pluto-agent-2" {
+		t.Fatalf("judge Cwd = %q, want the agent's worktree", rj.last.Cwd)
+	}
+}
+
+func TestReviewBlocksDestructiveInWorktree(t *testing.T) {
+	rj := &recordingJudge{}
+	g := newGate(t, rj, nil)
+
+	ctx := workdir.With(context.Background(), "/tmp/pluto-agent-2")
+	rr := g.Review(ctx, bashCall("rm -rf /"))
+	if rr.Allowed || rr.Source != "guard" {
+		t.Fatalf("guard must still block rm -rf / inside a worktree, got %+v", rr)
 	}
 }
 

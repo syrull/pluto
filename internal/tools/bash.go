@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 // Bash runs a shell command via sh -c and returns combined stdout and stderr.
@@ -80,6 +81,7 @@ func (Bash) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
+	cmd.Dir = workdir.From(ctx)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -127,6 +129,7 @@ func RunInline(ctx context.Context, command string) string {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir = workdir.From(ctx)
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

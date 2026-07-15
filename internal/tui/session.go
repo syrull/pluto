@@ -24,26 +24,71 @@ func (m *model) sessionStore() (*session.Store, error) {
 	return s, nil
 }
 
-// save writes the current conversation to the sessions dir, reusing name when
-// given, else the active session id, else a fresh timestamped id.
+// sessionAgents snapshots every workspace (or the single agent in the bare/test
+// model) into the persisted agent shape.
+func (m *model) sessionAgents() []session.Agent {
+	if len(m.workspaces) == 0 {
+		return []session.Agent{{Messages: m.agent.Snapshot()}}
+	}
+	agents := make([]session.Agent, 0, len(m.workspaces))
+	for _, w := range m.workspaces {
+		agents = append(agents, session.Agent{
+			Label:    w.label,
+			Cwd:      w.cwd,
+			Worktree: w.worktree,
+			Messages: w.agent.Snapshot(),
+		})
+	}
+	return agents
+}
+
+// anyConversation reports whether any agent holds a real conversation.
+func anyConversation(agents []session.Agent) bool {
+	for _, a := range agents {
+		if hasConversation(a.Messages) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildSession assembles a Session recording every agent, with the active
+// agent's transcript mirrored into Messages so listings and v1 readers still work.
+func (m *model) buildSession(name string) *session.Session {
+	agents := m.sessionAgents()
+	active := m.active
+	if active < 0 || active >= len(agents) {
+		active = 0
+	}
+	title := session.TitleFromMessages(agents[active].Messages)
+	if name == "" {
+		name = session.NewID(title)
+	}
+	return &session.Session{
+		ID:       name,
+		Title:    title,
+		Model:    m.agent.ProviderName(),
+		Messages: agents[active].Messages,
+		Agents:   agents,
+		Active:   active,
+	}
+}
+
+// save writes the current agents to the sessions dir, reusing name when given,
+// else the active session id, else a fresh timestamped id.
 func (m *model) save(name string) string {
 	store, err := m.sessionStore()
 	if err != nil {
 		return styleErr.Render("✗ sessions unavailable: " + err.Error())
 	}
-	msgs := m.agent.Snapshot()
-	if !hasConversation(msgs) {
+	if !anyConversation(m.sessionAgents()) {
 		return styleErr.Render("✗ nothing to save yet")
 	}
 	if name == "" {
 		name = m.sessionName
 	}
-	title := session.TitleFromMessages(msgs)
-	if name == "" {
-		name = session.NewID(title)
-	}
-	sess := &session.Session{ID: name, Title: title, Model: m.agent.ProviderName(), Messages: msgs}
-	if prev, err := store.Load(name); err == nil {
+	sess := m.buildSession(name)
+	if prev, err := store.Load(sess.ID); err == nil {
 		sess.CreatedAt = prev.CreatedAt // resave keeps the original creation time
 	}
 	if err := store.Save(sess); err != nil {
@@ -54,8 +99,9 @@ func (m *model) save(name string) string {
 	return ""
 }
 
-// resume loads a saved conversation, hands it to the agent, and rebuilds the
-// visible transcript from its messages.
+// resume loads a saved session and rebuilds its agents. A multi-agent session is
+// fully reconstructed (needs the agent factory); a single-agent or v1 session is
+// loaded into the existing active agent.
 func (m *model) resume(id string) {
 	store, err := m.sessionStore()
 	if err != nil {
@@ -73,32 +119,87 @@ func (m *model) resume(id string) {
 		m.syncViewport()
 		return
 	}
-	m.agent.Load(sess.Messages)
-	m.rebuildFromMessages(sess.Messages)
+	agents := sess.AgentList()
+	active := sess.Active
+	if active < 0 || active >= len(agents) {
+		active = 0
+	}
+
+	if m.newAgent == nil || len(agents) <= 1 {
+		a := agents[active]
+		m.agent.Load(a.Messages)
+		m.rebuildFromMessages(a.Messages)
+		if w := m.workspaceAt(m.active); w != nil {
+			if a.Cwd != "" {
+				w.cwd = a.Cwd
+			}
+			w.worktree = a.Worktree
+			w.label = a.Label
+			w.labeled = strings.TrimSpace(a.Label) != ""
+		}
+		m.sessionName = sess.ID
+		m.notice = "✓ resumed " + sess.ID
+		m.syncViewport()
+		return
+	}
+
+	m.restoreAgents(agents, active)
 	m.sessionName = sess.ID
 	m.notice = "✓ resumed " + sess.ID
 	m.syncViewport()
 }
 
-// autosave persists the active conversation after a completed turn so an
-// unexpected exit doesn't lose work. It runs by default (see autosaveEnabled).
+// restoreAgents rebuilds every workspace from a saved multi-agent set and makes
+// the recorded one active, reconstructing each visible transcript.
+func (m *model) restoreAgents(agents []session.Agent, active int) {
+	wss := make([]*workspace, 0, len(agents))
+	for _, a := range agents {
+		ag := m.newAgent()
+		ag.Load(a.Messages)
+		wss = append(wss, &workspace{
+			id:       m.nextID,
+			cwd:      a.Cwd,
+			worktree: a.Worktree,
+			label:    a.Label,
+			labeled:  strings.TrimSpace(a.Label) != "",
+			agent:    ag,
+			showHome: !hasConversation(a.Messages),
+		})
+		m.nextID++
+	}
+	m.workspaces = wss
+	for i, w := range wss {
+		m.active = i
+		m.unstash(i)
+		m.showHome = w.showHome
+		m.git = gitInfo{}
+		m.gitReady = false
+		m.tree = nil
+		m.changes = nil
+		m.rebuildFromMessages(w.agent.Snapshot())
+		m.stash(i)
+	}
+	m.active = active
+	m.unstash(active)
+	m.tree = newFileTree(m.activeCwd())
+	m.agentsCursor = active
+}
+
+// autosave persists all agents after a completed turn so an unexpected exit
+// doesn't lose work. It runs by default (see autosaveEnabled).
 func (m *model) autosave() {
 	if !autosaveEnabled() {
 		return
 	}
-	msgs := m.agent.Snapshot()
-	if !hasConversation(msgs) {
+	if !anyConversation(m.sessionAgents()) {
 		return
 	}
 	store, err := m.sessionStore()
 	if err != nil {
 		return
 	}
-	title := session.TitleFromMessages(msgs)
-	if m.sessionName == "" {
-		m.sessionName = session.NewID(title)
-	}
-	sess := &session.Session{ID: m.sessionName, Title: title, Model: m.agent.ProviderName(), Messages: msgs}
+	sess := m.buildSession(m.sessionName)
+	m.sessionName = sess.ID
 	if prev, err := store.Load(m.sessionName); err == nil {
 		sess.CreatedAt = prev.CreatedAt
 	}

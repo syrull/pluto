@@ -15,10 +15,11 @@ const (
 
 // Request is everything the judge sees about a proposed command.
 type Request struct {
-	Command string // the shell command to run
-	Intent  string // model-supplied "what this accomplishes"
-	Why     string // model-supplied rationale
-	Cwd     string // working directory, for context
+	Command string   // the shell command to run
+	Intent  string   // model-supplied "what this accomplishes"
+	Why     string   // model-supplied rationale
+	Cwd     string   // the agent's working directory (its worktree), for context
+	Roots   []string // directories the agent may legitimately operate within
 }
 
 // Verdict is the parsed judge output.

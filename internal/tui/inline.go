@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/syrull/pluto/internal/tools"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 // bashInlineMsg carries the result of an inline `!` shell command back to the
@@ -44,7 +45,7 @@ func (m *model) handleInline(in string) tea.Cmd {
 func (m *model) runInline(command string) tea.Cmd {
 	m.inlineEpoch++
 	epoch := m.inlineEpoch
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(workdir.With(context.Background(), m.activeCwd()))
 	m.inlineCancel = cancel
 	m.notice = "running: " + oneLine(command) + " — esc to cancel"
 	return func() tea.Msg {

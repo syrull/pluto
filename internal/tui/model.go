@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -17,9 +18,29 @@ import (
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
-type eventMsg agent.Event
+// eventMsg carries one agent Event to the UI, tagged with the id of the
+// workspace that produced it so background runs update their own state. Its
+// fields mirror agent.Event (see event()).
+type eventMsg struct {
+	Kind string
+	Text string
+	Tool string
+	id   int
+}
 
-type doneMsg struct{}
+// event rebuilds the agent.Event an eventMsg carries.
+func (e eventMsg) event() agent.Event {
+	return agent.Event{Kind: e.Kind, Text: e.Text, Tool: e.Tool}
+}
+
+// doneMsg signals a workspace's Run finished; id names the workspace.
+type doneMsg struct{ id int }
+
+// labelMsg delivers an auto-generated label for a workspace after its first turn.
+type labelMsg struct {
+	id    int
+	label string
+}
 
 type loginDoneMsg struct {
 	status string
@@ -144,6 +165,57 @@ type model struct {
 
 	// ghm is the open GitHub browser (issues/PRs), if any.
 	ghm *ghModal
+
+	// workspaces are the parallel agents. The model's per-agent fields above mirror
+	// the active workspace (workspaces[active]); background workspaces keep their
+	// own copy, kept in sync via stash/unstash. newAgent builds a fresh agent for a
+	// spawned workspace (same provider/tools/config); nextID hands out ids.
+	workspaces []*workspace
+	active     int
+	nextID     int
+	newAgent   func() *agent.Agent
+	// summarize, when set, produces a short one-shot label for an agent after its
+	// first completed turn; nil falls back to a label derived from the first message.
+	summarize func(ctx context.Context, prompt string) (string, error)
+	// agentsCursor is the highlighted row in the Agents pane; the row past the last
+	// agent is the "new agent" action.
+	agentsCursor int
+
+	// collapse state for the sidebar panes, toggled with '-'; expanded by default.
+	collapsedAgents  bool
+	collapsedFiles   bool
+	collapsedChanges bool
+}
+
+// workspace is one agent's conversation and its UI state. The model's matching
+// fields mirror the active workspace; stash/unstash move state between the two.
+type workspace struct {
+	id       int
+	label    string
+	cwd      string
+	worktree bool
+	labeled  bool // an auto-label has been requested/applied
+
+	agent  *agent.Agent
+	busy   bool
+	events chan eventMsg
+	cancel context.CancelFunc
+	unread bool // background progress since last viewed
+
+	showHome    bool
+	git         gitInfo
+	gitReady    bool
+	tree        *widgets.Tree
+	changes     *widgets.Tree
+	finder      *widgets.FuzzyPicker
+	finderBase  string
+	lines       []entry
+	outputs     []toolOutput
+	codeBlocks  []codeBlock
+	streamText  string
+	streamThink string
+	pendingTool string
+	pendingArgs string
 }
 
 // focusPane identifies which pane currently has keyboard focus. Tab cycles
@@ -155,6 +227,7 @@ const (
 	paneChat focusPane = iota
 	paneTree
 	paneChanges
+	paneAgents
 )
 
 // pickerKind identifies which setting an open ListPicker edits.
@@ -165,6 +238,7 @@ const (
 	pickerModel
 	pickerThink
 	pickerResume
+	pickerNewAgent
 )
 
 // inputHeight is the fixed number of visible rows in the input box; longer
@@ -220,9 +294,18 @@ func (m model) inputView() string {
 	return m.input.View()
 }
 
-// New builds the Bubbletea program.
-func New(a *agent.Agent, login *LoginHook) *tea.Program {
-	m := model{agent: a, login: login, md: newRenderer(80), input: newInput(80), mouse: mouseEnabled(), showHome: true, tip: pickTip()}
+// New builds the Bubbletea program. a is the default (initial) agent; newAgent
+// builds a fresh agent for each spawned workspace (same provider/tools/config);
+// summarize is an optional one-shot auto-labeler (nil ⇒ derive labels locally).
+func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook) *tea.Program {
+	cwd, _ := os.Getwd()
+	ws := &workspace{id: 0, cwd: cwd, agent: a, showHome: true}
+	m := model{
+		agent: a, login: login, md: newRenderer(80), input: newInput(80),
+		mouse: mouseEnabled(), showHome: true, tip: pickTip(),
+		workspaces: []*workspace{ws}, active: 0, nextID: 1,
+		newAgent: newAgent, summarize: summarize,
+	}
 	return tea.NewProgram(m)
 }
 

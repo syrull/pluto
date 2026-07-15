@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 // Find searches file contents with ripgrep and returns bounded path:line:text matches.
@@ -82,6 +83,7 @@ func (Find) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
+	cmd.Dir = workdir.From(ctx)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("find: %w", err)
