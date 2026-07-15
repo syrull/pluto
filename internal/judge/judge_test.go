@@ -167,6 +167,12 @@ func TestTransient(t *testing.T) {
 		{"dns", &net.DNSError{Err: "no such host"}, true},
 		{"wrapped dial refused", fmt.Errorf("judge: generate: %w", &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}), true},
 		{"plain error", errors.New("bad response"), false},
+		{"api overloaded 529", &llm.APIError{StatusCode: 529}, true},
+		{"api rate limited 429", &llm.APIError{StatusCode: 429}, true},
+		{"api server 503", &llm.APIError{StatusCode: 503}, true},
+		{"api bad request 400", &llm.APIError{StatusCode: 400}, false},
+		{"api unauthorized 401", &llm.APIError{StatusCode: 401}, false},
+		{"wrapped api 529", fmt.Errorf("anthropic: %w", &llm.APIError{StatusCode: 529}), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,6 +180,64 @@ func TestTransient(t *testing.T) {
 				t.Fatalf("transient(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLLMAssessRetriesOverloaded(t *testing.T) {
+	// A 529 "overloaded" (wrapped as the provider returns it) is transient and
+	// must be retried, not fail-safe-blocked on the first attempt.
+	overloaded := fmt.Errorf("anthropic: %w", &llm.APIError{StatusCode: 529, Body: "Overloaded"})
+	p := &flakyProvider{failN: 2, failErr: overloaded, text: `{"decision":"allow","risk":"low","reason":"ok"}`}
+	j := NewLLM(p)
+	j.backoff = time.Millisecond // keep the test fast
+
+	v, err := j.Assess(context.Background(), Request{Command: "go test ./..."})
+	if err != nil {
+		t.Fatalf("Assess() err = %v, want nil after retrying overload", err)
+	}
+	if v.Decision != DecisionAllow {
+		t.Fatalf("Assess() = %+v, want allow", v)
+	}
+	if p.calls != 3 {
+		t.Fatalf("provider called %d times, want 3 (two overloads then success)", p.calls)
+	}
+}
+
+func TestRetryWait(t *testing.T) {
+	j := NewLLM(fakeProvider{})
+	// Plain transient error: linear backoff, no Retry-After.
+	if got := j.retryWait(errors.New("x"), 1); got != j.backoff {
+		t.Fatalf("retryWait(plain,1) = %v, want %v", got, j.backoff)
+	}
+	// A short Retry-After is honored verbatim.
+	short := &llm.APIError{StatusCode: 529, RetryAfter: 900 * time.Millisecond}
+	if got := j.retryWait(short, 1); got != 900*time.Millisecond {
+		t.Fatalf("retryWait(short) = %v, want 900ms", got)
+	}
+	// A long Retry-After is clamped so a retry never stalls the turn.
+	long := &llm.APIError{StatusCode: 529, RetryAfter: time.Minute}
+	if got := j.retryWait(long, 1); got != maxRetryWait {
+		t.Fatalf("retryWait(long) = %v, want %v (clamped)", got, maxRetryWait)
+	}
+}
+
+// detProvider is a minimal provider that records a pinned temperature.
+type detProvider struct{ temp *float64 }
+
+func (*detProvider) Name() string { return "det" }
+func (*detProvider) Generate(context.Context, []llm.Message, []llm.ToolSpec) (llm.Response, error) {
+	return llm.Response{}, nil
+}
+func (p *detProvider) SetTemperature(t float64) { p.temp = &t }
+
+func TestNewLLMPinsDeterministic(t *testing.T) {
+	p := &detProvider{}
+	_ = NewLLM(p)
+	if p.temp == nil {
+		t.Fatal("NewLLM did not pin temperature on a Deterministic provider")
+	}
+	if *p.temp != 0 {
+		t.Fatalf("pinned temperature = %v, want 0", *p.temp)
 	}
 }
 
