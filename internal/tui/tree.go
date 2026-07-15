@@ -773,7 +773,7 @@ func agentStatus(busy, unread, changes bool) string {
 	case busy:
 		return styleWorking.Render("● working")
 	case unread:
-		return styleReview.Render("• updated")
+		return styleDone.Render("✓ done")
 	case changes:
 		return styleHint.Render("✎")
 	default:

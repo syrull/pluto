@@ -14,6 +14,7 @@ var (
 	styleBashPrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
 	styleBashInput  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	styleWorking    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	styleDone       = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true) // green: agent finished, unread
 	styleThink      = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
 	styleThinkHdr   = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
 	styleThinkBox   = lipgloss.NewStyle().
