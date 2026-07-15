@@ -18,7 +18,7 @@ type Request struct {
 	Command string // the shell command to run
 	Intent  string // model-supplied "what this accomplishes"
 	Why     string // model-supplied rationale
-	Cwd     string // working directory, for context
+	Cwd     string // the agent's working directory (its worktree), for context
 }
 
 // Verdict is the parsed judge output.

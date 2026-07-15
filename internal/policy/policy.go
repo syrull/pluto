@@ -13,6 +13,7 @@ import (
 	"github.com/syrull/pluto/internal/guard"
 	"github.com/syrull/pluto/internal/judge"
 	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 // Mode selects how the gate reviews commands.
@@ -85,7 +86,14 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 		return agent.ReviewResult{Allowed: true, Source: "guard-only"}
 	}
 
-	verdict, err := j.Assess(ctx, judge.Request{Command: cmd, Intent: intent, Why: why, Cwd: cwd()})
+	// The agent's actual working directory (its worktree) rides in on the context;
+	// fall back to the process cwd only when none was threaded through. Passing the
+	// real dir keeps a worktree-scoped command from reading as out-of-scope.
+	dir := workdir.From(ctx)
+	if dir == "" {
+		dir = cwd()
+	}
+	verdict, err := j.Assess(ctx, judge.Request{Command: cmd, Intent: intent, Why: why, Cwd: dir})
 	if err != nil {
 		allowed := cfg.OnJudgeError == judge.DecisionAllow
 		reason := "judge unavailable — allowed by policy"

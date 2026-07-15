@@ -16,14 +16,18 @@ import (
 )
 
 // formatVersion is the on-disk schema version, bumped on incompatible changes.
-const formatVersion = 1
+// v2 adds the multi-agent Agents/Active fields; v1 files (Messages only) still
+// load and are treated as a single-agent session.
+const formatVersion = 2
 
 const ext = ".json"
 
 // ErrNotFound is returned when a named session does not exist.
 var ErrNotFound = errors.New("session: not found")
 
-// Session is a persisted conversation and its metadata.
+// Session is a persisted conversation and its metadata. A v2 session records a
+// set of Agents; Messages holds the active agent's transcript so v1 readers and
+// the listing count still work.
 type Session struct {
 	Version   int           `json:"version"`
 	ID        string        `json:"id"`
@@ -32,6 +36,26 @@ type Session struct {
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
 	Messages  []llm.Message `json:"messages"`
+	Agents    []Agent       `json:"agents,omitempty"`
+	Active    int           `json:"active,omitempty"`
+}
+
+// Agent is one persisted conversation within a multi-agent session: its
+// transcript plus the working directory and label that identify it.
+type Agent struct {
+	Label    string        `json:"label,omitempty"`
+	Cwd      string        `json:"cwd,omitempty"`
+	Worktree bool          `json:"worktree,omitempty"`
+	Messages []llm.Message `json:"messages"`
+}
+
+// AgentList returns the session's agents, upgrading a v1 (Messages-only) session
+// to a single agent so callers can treat every session uniformly.
+func (s *Session) AgentList() []Agent {
+	if len(s.Agents) > 0 {
+		return s.Agents
+	}
+	return []Agent{{Messages: s.Messages}}
 }
 
 // Meta is lightweight session metadata for listing without loading transcripts.

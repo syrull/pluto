@@ -9,6 +9,7 @@ import (
 
 	"github.com/syrull/pluto/internal/diff"
 	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 // Write is a tool that writes content to a file, creating parent directories.
@@ -33,7 +34,7 @@ type writeArgs struct {
 	Content string `json:"content"`
 }
 
-func (Write) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (Write) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a writeArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("write: invalid arguments: %w", err)
@@ -42,14 +43,15 @@ func (Write) Execute(_ context.Context, args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("write: path is required")
 	}
 
-	old, _ := os.ReadFile(a.Path)
+	path := workdir.Resolve(ctx, a.Path)
+	old, _ := os.ReadFile(path)
 
-	if dir := filepath.Dir(a.Path); dir != "" {
+	if dir := filepath.Dir(path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("write: create dir: %w", err)
 		}
 	}
-	if err := os.WriteFile(a.Path, []byte(a.Content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(a.Content), 0o644); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 

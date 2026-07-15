@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,10 +37,16 @@ func treeStyle() widgets.TreeStyle {
 	return widgets.TreeStyle{Cursor: styleTreeCursor, Dir: styleTreeDir, File: styleTreeFile}
 }
 
-// newFileTree builds the sidebar file explorer rooted at the working directory.
-func newFileTree() *widgets.Tree {
-	dir, err := os.Getwd()
-	if err != nil || dir == "" {
+// newFileTree builds the sidebar file explorer rooted at dir (the active agent's
+// working directory), falling back to the process cwd when dir is empty.
+func newFileTree(dir string) *widgets.Tree {
+	if dir == "" {
+		var err error
+		if dir, err = os.Getwd(); err != nil {
+			return nil
+		}
+	}
+	if dir == "" {
 		return nil
 	}
 	root := &widgets.TreeNode{Name: filepath.Base(dir), Path: dir, IsDir: true}
@@ -221,12 +228,15 @@ func (m *model) activePane() *widgets.Tree {
 	return m.tree
 }
 
-// focusOrder returns the panes Tab cycles through, skipping Changes when clean.
+// focusOrder returns the panes Tab cycles through: chat, the file tree, Changes
+// (only when the tree is dirty), then the Agents pane. Tree stays first after
+// chat so a single Tab lands on the files.
 func (m *model) focusOrder() []focusPane {
 	order := []focusPane{paneChat, paneTree}
 	if m.changes != nil {
 		order = append(order, paneChanges)
 	}
+	order = append(order, paneAgents)
 	return order
 }
 
@@ -261,6 +271,9 @@ func (m *model) paneKey(ks string) (bool, tea.Cmd) {
 		m.cycleFocus(true)
 		return true, nil
 	}
+	if m.focus == paneAgents {
+		return m.agentsKey(ks)
+	}
 	if m.focus != paneTree && m.focus != paneChanges {
 		return false, nil
 	}
@@ -282,6 +295,8 @@ func (m *model) paneKey(ks string) (bool, tea.Cmd) {
 		if p != nil {
 			p.Expand()
 		}
+	case "-":
+		m.toggleCollapse(m.focus)
 	case "enter":
 		if p != nil {
 			if n, ok := p.Selected(); ok {
@@ -309,11 +324,54 @@ func (m *model) paneKey(ks string) (bool, tea.Cmd) {
 	return true, nil
 }
 
-// openFinder opens the fuzzy file picker over the repo's files, remembering the
-// base directory selections resolve against.
+// agentsKey drives the Agents pane: navigating the list, switching agents,
+// creating a new one, and collapsing the pane.
+func (m *model) agentsKey(ks string) (bool, tea.Cmd) {
+	newRow := len(m.workspaces) // the row past the last agent is "＋ new agent"
+	switch ks {
+	case "up":
+		if m.agentsCursor > 0 {
+			m.agentsCursor--
+		}
+	case "down":
+		if m.agentsCursor < newRow {
+			m.agentsCursor++
+		}
+	case "enter":
+		if m.agentsCursor >= newRow {
+			return true, m.promptNewAgent()
+		}
+		return true, m.switchTo(m.agentsCursor)
+	case "n":
+		return true, m.promptNewAgent()
+	case "-":
+		m.toggleCollapse(paneAgents)
+	case "esc":
+		m.focus = paneChat
+	default:
+		m.focus = paneChat
+		return false, nil
+	}
+	return true, nil
+}
+
+// toggleCollapse flips the collapsed state of a sidebar pane.
+func (m *model) toggleCollapse(p focusPane) {
+	switch p {
+	case paneAgents:
+		m.collapsedAgents = !m.collapsedAgents
+	case paneTree:
+		m.collapsedFiles = !m.collapsedFiles
+	case paneChanges:
+		m.collapsedChanges = !m.collapsedChanges
+	}
+}
+
+// openFinder opens the fuzzy file picker over the active agent's files,
+// remembering the base directory selections resolve against.
 func (m *model) openFinder() {
-	base, err := os.Getwd()
-	if err != nil || base == "" {
+	base := m.activeCwd()
+	if base == "" {
 		return
 	}
 	files := collectFiles(base)
@@ -338,7 +396,7 @@ func (m *model) openFinderFile(rel string) {
 // openFileDiff shows a file's working-tree diff in a modal, falling back to its
 // (syntax-highlighted) contents when there is no diff.
 func (m *model) openFileDiff(path string) {
-	title, body, isDiff := fileDiff(path, m.git.root)
+	title, body, isDiff := fileDiff(path, m.git.root, m.activeCwd())
 	m.modal = widgets.NewModal(title, body, modalStyle())
 	if isDiff {
 		w := diffContentWidth(m.width)
@@ -354,7 +412,7 @@ func (m *model) openFileDiff(path string) {
 	m.modal.SetSize(m.width, m.height)
 }
 
-func fileDiff(path, root string) (title, body string, isDiff bool) {
+func fileDiff(path, root, dir string) (title, body string, isDiff bool) {
 	rel := path
 	if root != "" {
 		if r, err := filepath.Rel(root, path); err == nil {
@@ -364,7 +422,7 @@ func fileDiff(path, root string) (title, body string, isDiff bool) {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return rel, "cannot open a directory", false
 	}
-	if out, err := gitRun("diff", "HEAD", "--", path); err == nil {
+	if out, err := gitRunDir(dir, "diff", "HEAD", "--", path); err == nil {
 		if d := strings.TrimRight(out, "\n"); strings.TrimSpace(d) != "" {
 			return "diff · " + rel, d, true
 		}
@@ -523,8 +581,18 @@ func (m model) sidebarWidth() int {
 	return w
 }
 
-// sidebarView renders the file-tree panel and, when the working tree is dirty, a
-// second "Changes" pane below it, exactly height rows tall including the hint.
+// sidebarPane describes one stacked sidebar pane for layout.
+type sidebarPane struct {
+	title     string
+	focus     focusPane
+	collapsed bool
+	tree      *widgets.Tree // nil for the Agents pane
+	agents    bool
+}
+
+// sidebarView stacks the Agents, Files, and (when dirty) Changes panes, each
+// collapsible to a single header line, exactly height rows tall including the
+// hint. Expanded panes share the space freed by collapsed ones.
 func (m model) sidebarView(height int) string {
 	sw := m.sidebarWidth()
 	content := sw - 2
@@ -532,33 +600,163 @@ func (m model) sidebarView(height int) string {
 		content = 6
 	}
 	avail := height - 1 // reserve the hint line beneath the panes
+	if avail < 3 {
+		avail = 3
+	}
+
+	panes := []sidebarPane{
+		{title: "Agents", focus: paneAgents, collapsed: m.collapsedAgents, agents: true},
+		{title: "Files", focus: paneTree, collapsed: m.collapsedFiles, tree: m.tree},
+	}
+	if m.changes != nil {
+		panes = append(panes, sidebarPane{title: "Changes", focus: paneChanges, collapsed: m.collapsedChanges, tree: m.changes})
+	}
+
+	expanded := 0
+	for _, p := range panes {
+		if !p.collapsed {
+			expanded++
+		}
+	}
+	// Space left for expanded panes after each collapsed pane takes its header row.
+	remaining := avail - (len(panes) - expanded)
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	var rows []string
+	used, seen := 0, 0
+	for _, p := range panes {
+		focused := m.focus == p.focus
+		if p.collapsed {
+			rows = append(rows, collapsedHeader(sw, p.title, focused))
+			used++
+			continue
+		}
+		seen++
+		h := remaining / expanded
+		if seen == expanded { // last expanded pane absorbs the remainder
+			h = remaining - (remaining/expanded)*(expanded-1)
+		}
+		if h < 3 {
+			h = 3
+		}
+		if p.agents {
+			rows = append(rows, m.agentsPane(sw, content, h, focused))
+		} else {
+			rows = append(rows, m.paneView(sw, content, h, p.title, p.tree, focused))
+		}
+		used += h
+	}
+	body := strings.Join(rows, "\n")
+	for used < avail { // pad so the sidebar always fills its height
+		body += "\n"
+		used++
+	}
+
+	hintText := "tab pane · ↑/↓ move · ↵ open · - collapse"
+	if m.focus == paneAgents {
+		hintText = "↑/↓ move · ↵ switch · n new · - collapse"
+	}
+	hint := lipgloss.NewStyle().MaxWidth(sw).Render(styleHint.Render(hintText))
+	return body + "\n" + hint
+}
+
+// collapsedHeader renders a collapsed pane as just its titled top-border line.
+func collapsedHeader(sw int, title string, focused bool) string {
+	borderStyle := styleTreeBorder
+	if focused {
+		borderStyle = styleTreeBorderFocus
+	}
+	return borderTitle(sw, title, borderStyle)
+}
+
+// agentsPane renders the Agents list inside a titled box of total height boxH.
+func (m model) agentsPane(sw, content, boxH int, focused bool) string {
+	bodyH := boxH - 2
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	return titledBox(sw, boxH, "Agents", m.agentsBody(content, bodyH), focused)
+}
+
+// agentsBody renders the agent rows plus the "＋ new agent" action, marking the
+// active agent, the navigation cursor, and per-agent status.
+func (m model) agentsBody(width, height int) string {
+	if height < 1 {
+		height = 1
+	}
+	rows := make([]string, 0, len(m.workspaces)+1)
+	for i, w := range m.workspaces {
+		rows = append(rows, m.agentRow(i, w, width, m.focus == paneAgents && i == m.agentsCursor))
+	}
+	newSel := m.focus == paneAgents && m.agentsCursor >= len(m.workspaces)
+	rows = append(rows, agentActionRow(width, newSel))
+
+	// Keep the cursor row visible within the available height.
+	start := 0
+	if len(rows) > height {
+		cur := m.agentsCursor
+		if cur >= len(rows) {
+			cur = len(rows) - 1
+		}
+		if cur >= height {
+			start = cur - height + 1
+		}
+		rows = rows[start : start+height]
+	}
+	return strings.Join(rows, "\n")
+}
+
+// agentRow renders a single agent entry: cursor gutter, number, label, status.
+// The active row reads live model state (m.busy/m.git) rather than the
+// workspace copy, which is only synced on stash, so its status is never stale.
+func (m model) agentRow(i int, w *workspace, width int, selected bool) string {
+	gutter := "  "
+	if selected {
+		gutter = styleTreeCursor.Render("› ")
+	}
+	name := fmt.Sprintf("%d %s", i+1, m.workspaceLabel(i))
+	nameStyle := styleTreeFile
+	busy, unread, changes := w.busy, w.unread, len(w.git.status) > 0
+	if i == m.active {
+		nameStyle = styleTreeDir.Bold(true)
+		busy, unread, changes = m.busy, false, len(m.git.status) > 0
+	}
+	status := agentStatus(busy, unread, changes)
+	avail := width - 2 - lipgloss.Width(status)
 	if avail < 4 {
 		avail = 4
 	}
-	var hintText string
-	var panes string
-	if m.changes == nil {
-		panes = m.paneView(sw, content, avail, "Files", m.tree, m.focus == paneTree)
-		hintText = "tab pane · ↑/↓ move · ↵ diff · / find"
-	} else {
-		changesH := avail / 3
-		if changesH < 5 {
-			changesH = 5
-		}
-		if changesH > avail-5 {
-			changesH = avail - 5
-		}
-		if changesH < 4 {
-			changesH = 4
-		}
-		filesH := avail - changesH
-		files := m.paneView(sw, content, filesH, "Files", m.tree, m.focus == paneTree)
-		changes := m.paneView(sw, content, changesH, "Changes", m.changes, m.focus == paneChanges)
-		panes = files + "\n" + changes
-		hintText = "tab pane · ↑/↓ move · ↵ diff · / find"
+	label := nameStyle.Render(truncCells(name, avail))
+	if status != "" {
+		label += " " + status
 	}
-	hint := lipgloss.NewStyle().MaxWidth(sw).Render(styleHint.Render(hintText))
-	return panes + "\n" + hint
+	return gutter + label
+}
+
+// agentStatus renders the trailing per-agent status glyph: working, unread
+// background progress, or a dirty-tree marker.
+func agentStatus(busy, unread, changes bool) string {
+	switch {
+	case busy:
+		return styleWorking.Render("● working")
+	case unread:
+		return styleReview.Render("• updated")
+	case changes:
+		return styleHint.Render("✎")
+	default:
+		return ""
+	}
+}
+
+// agentActionRow renders the "＋ new agent" affordance beneath the agent list.
+func agentActionRow(width int, selected bool) string {
+	gutter := "  "
+	if selected {
+		gutter = styleTreeCursor.Render("› ")
+	}
+	return gutter + stylePrompt.Render(truncCells("＋ new agent", width-2))
 }
 
 // paneView renders one titled pane of total height boxH, giving the tree the

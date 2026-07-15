@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/syrull/pluto/internal/tool"
+	"github.com/syrull/pluto/internal/workdir"
 )
 
 // Read returns the contents of a file on disk, with optional offset/limit for line ranges.
@@ -44,7 +45,7 @@ type readArgs struct {
 // readMaxBytes bounds returned file content to prevent context window overflow.
 const readMaxBytes = 32 * 1024
 
-func (Read) Execute(_ context.Context, args json.RawMessage) (string, error) {
+func (Read) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var a readArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("read: invalid arguments: %w", err)
@@ -59,7 +60,7 @@ func (Read) Execute(_ context.Context, args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("read: limit must be >= 0")
 	}
 
-	f, err := os.Open(a.Path)
+	f, err := os.Open(workdir.Resolve(ctx, a.Path))
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}
