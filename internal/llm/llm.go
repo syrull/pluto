@@ -4,6 +4,9 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
 )
 
 // Role identifies the author of a Message.
@@ -141,6 +144,53 @@ type Thinkable interface {
 
 // Thinking reports whether l is any level other than none.
 func (l ThinkLevel) Thinking() bool { return l != "" && l != ThinkNone }
+
+// Deterministic is an optional capability to pin sampling for reproducible
+// output. The judge uses it so an identical command yields an identical
+// verdict instead of flip-flopping between runs.
+type Deterministic interface {
+	// SetTemperature pins the sampling temperature; 0 requests greedy,
+	// (near-)deterministic decoding.
+	SetTemperature(t float64)
+}
+
+// APIError is a non-2xx HTTP response from a model provider's API. Providers
+// return it (typically wrapped) so callers can classify a failure by status
+// code — e.g. the judge's retry logic — instead of string-matching an opaque
+// error message.
+type APIError struct {
+	// StatusCode is the HTTP status the provider returned.
+	StatusCode int
+	// Body is the (already truncated) response body, for diagnostics.
+	Body string
+	// RetryAfter is the delay the provider asked for via the Retry-After
+	// header, or 0 when none was present or it could not be parsed.
+	RetryAfter time.Duration
+}
+
+// Error implements error.
+func (e *APIError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Body)
+}
+
+// Retryable reports whether the status is a transient server-side condition
+// worth retrying: request timeout, rate limiting, Anthropic's "overloaded"
+// status (529), or a temporary upstream/server error. A 4xx that signals a
+// client mistake (bad request, auth) is not retryable.
+func (e *APIError) Retryable() bool {
+	switch e.StatusCode {
+	case http.StatusRequestTimeout, // 408
+		http.StatusTooEarly,            // 425
+		http.StatusTooManyRequests,     // 429
+		http.StatusInternalServerError, // 500
+		http.StatusBadGateway,          // 502
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout,      // 504
+		529:                            // Anthropic "Overloaded"
+		return true
+	}
+	return false
+}
 
 // DeltaKind classifies an incremental streaming chunk.
 type DeltaKind string

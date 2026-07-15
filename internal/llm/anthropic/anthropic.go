@@ -69,6 +69,10 @@ type Provider struct {
 	// webSearchMaxUses, when > 0, enables Anthropic's server-side web_search
 	// tool and caps searches per request. Zero disables it.
 	webSearchMaxUses int
+	// temperature, when non-nil, pins the sampling temperature (the judge sets
+	// 0 for reproducible verdicts). Nil leaves it unset so the API default
+	// applies for the main agent.
+	temperature *float64
 }
 
 var (
@@ -76,6 +80,7 @@ var (
 	_ llm.Switchable      = (*Provider)(nil)
 	_ llm.Thinkable       = (*Provider)(nil)
 	_ llm.ContextWindower = (*Provider)(nil)
+	_ llm.Deterministic   = (*Provider)(nil)
 )
 
 // New builds a Provider for the given model, resolving credentials from the environment.
@@ -146,6 +151,14 @@ func (p *Provider) SetWebSearchMaxUses(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.webSearchMaxUses = n
+}
+
+// SetTemperature implements llm.Deterministic. It pins the sampling temperature
+// for subsequent requests; the judge sets 0 for reproducible verdicts.
+func (p *Provider) SetTemperature(t float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.temperature = &t
 }
 
 // SetModel switches the active model, re-clamping the effort level as needed.
@@ -236,6 +249,9 @@ type wireRequest struct {
 	Stream       bool              `json:"stream,omitempty"`
 	Thinking     *wireThinking     `json:"thinking,omitempty"`
 	OutputConfig *wireOutputConfig `json:"output_config,omitempty"`
+	// Temperature, when non-nil, pins sampling. Left nil (omitted) for the main
+	// agent so the API default applies; the judge sets 0 for reproducibility.
+	Temperature *float64 `json:"temperature,omitempty"`
 }
 
 // wireThinking configures extended thinking per the model regime (legacy vs adaptive).
@@ -385,6 +401,13 @@ func (p *Provider) buildRequest(transcript []llm.Message, tools []llm.ToolSpec, 
 	case regimeNone:
 		// no thinking control available
 	}
+	// Apply a pinned temperature only when thinking is off: Anthropic rejects a
+	// non-default temperature combined with extended thinking. The judge (which
+	// sets temperature) always runs with thinking disabled, so this never drops
+	// a requested pin in practice; the guard is defensive.
+	if p.temperature != nil && (req.Thinking == nil || req.Thinking.Type == "disabled") {
+		req.Temperature = p.temperature
+	}
 	applyCacheBreakpoints(&req)
 	return req
 }
@@ -486,7 +509,11 @@ func (p *Provider) Generate(ctx context.Context, transcript []llm.Message, tools
 		return llm.Response{}, fmt.Errorf("anthropic: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return llm.Response{}, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(body, 500))
+		return llm.Response{}, fmt.Errorf("anthropic: %w", &llm.APIError{
+			StatusCode: resp.StatusCode,
+			Body:       truncate(body, 500),
+			RetryAfter: parseRetryAfter(resp.Header),
+		})
 	}
 
 	var wire wireResponse
@@ -728,4 +755,26 @@ func truncate(b []byte, n int) string {
 		return string(b)
 	}
 	return string(b[:n]) + "…"
+}
+
+// parseRetryAfter reads a Retry-After header, which may be either an integer
+// number of seconds (delay-seconds) or an HTTP-date, and returns the delay. It
+// returns 0 when the header is absent, negative, or unparseable.
+func parseRetryAfter(h http.Header) time.Duration {
+	v := strings.TrimSpace(h.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }

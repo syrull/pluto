@@ -85,7 +85,11 @@ func (p *Provider) GenerateStream(ctx context.Context, transcript []llm.Message,
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return llm.Response{}, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(body, 500))
+		return llm.Response{}, fmt.Errorf("anthropic: %w", &llm.APIError{
+			StatusCode: resp.StatusCode,
+			Body:       truncate(body, 500),
+			RetryAfter: parseRetryAfter(resp.Header),
+		})
 	}
 
 	return parseSSE(resp.Body, streamIdleTimeout, cancel, onDelta)
