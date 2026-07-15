@@ -152,11 +152,13 @@ func TestToggleCollapse(t *testing.T) {
 func TestFocusOrderReachesAgents(t *testing.T) {
 	m := multiModel(1)
 	order := m.focusOrder()
-	if order[0] != paneChat || order[1] != paneTree {
-		t.Fatalf("tab order should start chat→files, got %v", order)
+	// Tab follows the sidebar's visual top-to-bottom order (Agents, Files, ...),
+	// so a single Tab out of the chat lands on Agents.
+	if order[0] != paneChat || order[1] != paneAgents {
+		t.Fatalf("tab order should start chat→agents, got %v", order)
 	}
-	if order[len(order)-1] != paneAgents {
-		t.Fatalf("tab order should reach the Agents pane, got %v", order)
+	if order[2] != paneTree {
+		t.Fatalf("tab order should reach Files after Agents, got %v", order)
 	}
 }
 

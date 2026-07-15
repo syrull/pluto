@@ -144,10 +144,16 @@ func TestHomeArrowsDriveTreeWithoutDismissing(t *testing.T) {
 	}
 	start, _ := got.tree.Selected()
 
-	// Tab moves focus from the chat pane to the file tree, then arrows drive it.
+	// Tab follows the sidebar's visual order (Agents first, then Files), so the
+	// first Tab focuses Agents and the second reaches the file tree; arrows then
+	// drive it.
+	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if got := tm.(model); got.focus != paneAgents {
+		t.Fatalf("first tab should focus the agents pane, got focus %d", got.focus)
+	}
 	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	if got := tm.(model); got.focus != paneTree {
-		t.Fatalf("tab should focus the tree pane, got focus %d", got.focus)
+		t.Fatalf("second tab should focus the tree pane, got focus %d", got.focus)
 	}
 	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	got = tm.(model)

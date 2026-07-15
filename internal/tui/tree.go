@@ -242,15 +242,16 @@ func (m *model) activePane() *widgets.Tree {
 	return m.tree
 }
 
-// focusOrder returns the panes Tab cycles through: chat, the file tree, Changes
-// (only when the tree is dirty), then the Agents pane. Tree stays first after
-// chat so a single Tab lands on the files.
+// focusOrder returns the panes Tab cycles through, following the sidebar's
+// visual top-to-bottom order: chat, then Agents, the file tree, and Changes
+// (only when the tree is dirty). Agents is drawn on top of the sidebar (see
+// sidebarView), so a single Tab out of the chat lands on it, and shift+tab
+// reverses the same order.
 func (m *model) focusOrder() []focusPane {
-	order := []focusPane{paneChat, paneTree}
+	order := []focusPane{paneChat, paneAgents, paneTree}
 	if m.changes != nil {
 		order = append(order, paneChanges)
 	}
-	order = append(order, paneAgents)
 	return order
 }
 
