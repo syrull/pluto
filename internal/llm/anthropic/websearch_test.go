@@ -191,6 +191,29 @@ func TestWebSearchResultSummary(t *testing.T) {
 	}
 }
 
+func TestFormatWebResult(t *testing.T) {
+	tests := []struct {
+		name      string
+		title     string
+		url       string
+		alwaysURL bool
+		want      string
+	}{
+		{"title and url", "Go", "https://go.dev", false, "Go (https://go.dev)"},
+		{"empty title collapses to url", "", "https://go.dev", false, "https://go.dev"},
+		{"empty title keeps url in footer", "", "https://go.dev", true, "https://go.dev (https://go.dev)"},
+		{"title equal to url collapses", "https://go.dev", "https://go.dev", false, "https://go.dev"},
+		{"no url", "Go", "", true, "Go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatWebResult(tt.title, tt.url, tt.alwaysURL); got != tt.want {
+				t.Fatalf("formatWebResult(%q,%q,%v) = %q, want %q", tt.title, tt.url, tt.alwaysURL, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestServerToolArgsDefaultsToEmptyObject(t *testing.T) {
 	if got := serverToolArgs(""); got != "{}" {
 		t.Fatalf("serverToolArgs(\"\") = %q, want {}", got)

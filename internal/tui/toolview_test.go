@@ -63,6 +63,20 @@ func TestRenderToolCallWebSearchShowsQuery(t *testing.T) {
 	}
 }
 
+func TestFormatWebSearchArgs(t *testing.T) {
+	if got := formatWebSearchArgs(`{"query":"golang"}`); got != "golang" {
+		t.Fatalf("formatWebSearchArgs(query) = %q, want %q", got, "golang")
+	}
+	// A well-formed call with no query renders empty (→ web_search()), not "{}".
+	if got := formatWebSearchArgs(`{}`); got != "" {
+		t.Fatalf("formatWebSearchArgs({}) = %q, want empty", got)
+	}
+	// Malformed JSON falls back to the raw args for debugging.
+	if got := formatWebSearchArgs(`not json`); got != "not json" {
+		t.Fatalf("formatWebSearchArgs(malformed) = %q, want the raw args", got)
+	}
+}
+
 func TestRenderToolResultWebSearchSummarizesResults(t *testing.T) {
 	results := "Go (https://go.dev)\nGolang blog (https://go.dev/blog)\nWikipedia (https://en.wikipedia.org/wiki/Go)"
 	got := renderToolResult(80, "web_search", results)

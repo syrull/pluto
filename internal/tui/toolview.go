@@ -130,12 +130,15 @@ func formatToolCallArgs(toolName, raw string) string {
 	}
 }
 
-// formatWebSearchArgs extracts the query from a web_search call's JSON args.
+// formatWebSearchArgs extracts the query from a web_search call's JSON args. On
+// malformed JSON it falls back to the raw args for debugging; a well-formed call
+// with no query yields an empty string (rendered as "web_search()") rather than
+// the literal "{}".
 func formatWebSearchArgs(raw string) string {
 	var a struct {
 		Query string `json:"query"`
 	}
-	if err := json.Unmarshal([]byte(raw), &a); err != nil || a.Query == "" {
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
 		return raw
 	}
 	return a.Query

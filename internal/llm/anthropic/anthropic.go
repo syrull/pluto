@@ -691,6 +691,20 @@ func collapseWhitespace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// formatWebResult renders a web result as "title (url)", falling back to the URL
+// as the title when none is given. When alwaysURL is false the parenthetical is
+// dropped if it would merely repeat the title; the Sources footer passes true so
+// every cited URL stays visible.
+func formatWebResult(title, url string, alwaysURL bool) string {
+	if title == "" {
+		title = url
+	}
+	if url != "" && (alwaysURL || url != title) {
+		return title + " (" + url + ")"
+	}
+	return title
+}
+
 // webSearchResultSummary renders a web_search_tool_result block's content as a
 // short, human-readable list of "title (url)" lines, one per result, or a note
 // when the search errored or returned nothing.
@@ -709,17 +723,7 @@ func webSearchResultSummary(raw json.RawMessage) string {
 				b.WriteByte('\n')
 			}
 			// Collapse internal whitespace so each result stays on one line.
-			title := collapseWhitespace(r.Title)
-			url := collapseWhitespace(r.URL)
-			if title == "" {
-				title = url
-			}
-			b.WriteString(title)
-			if url != "" && url != title {
-				b.WriteString(" (")
-				b.WriteString(url)
-				b.WriteByte(')')
-			}
+			b.WriteString(formatWebResult(collapseWhitespace(r.Title), collapseWhitespace(r.URL), false))
 		}
 		return b.String()
 	}
@@ -779,15 +783,10 @@ func (s *sourceSet) footer() string {
 	var b strings.Builder
 	b.WriteString("\n\nSources:\n")
 	for _, c := range s.order {
-		title := c.Title
-		if title == "" {
-			title = c.URL
-		}
 		b.WriteString("- ")
-		b.WriteString(title)
-		b.WriteString(" (")
-		b.WriteString(c.URL)
-		b.WriteString(")\n")
+		// Always show the URL so every cited source stays visible/clickable.
+		b.WriteString(formatWebResult(c.Title, c.URL, true))
+		b.WriteByte('\n')
 	}
 	return b.String()
 }
