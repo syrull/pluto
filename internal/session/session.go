@@ -28,12 +28,14 @@ var ErrNotFound = errors.New("session: not found")
 
 // Session is a persisted conversation and its metadata. A v2 session records a
 // set of Agents; Messages holds the active agent's transcript so v1 readers and
-// the listing count still work.
+// the listing count still work. Cwd is the working directory the conversation
+// happened in, used to scope /resume to the current folder.
 type Session struct {
 	Version   int           `json:"version"`
 	ID        string        `json:"id"`
 	Title     string        `json:"title,omitempty"`
 	Model     string        `json:"model,omitempty"`
+	Cwd       string        `json:"cwd,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
 	Messages  []llm.Message `json:"messages"`
@@ -64,6 +66,7 @@ type Meta struct {
 	ID        string
 	Title     string
 	Model     string
+	Cwd       string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Count     int
@@ -138,7 +141,7 @@ func (s *Store) Save(sess *Session) error {
 		return fmt.Errorf("session: rename: %w", err)
 	}
 	debug.Info("session", "saved", "id", sess.ID, "path", s.path(sess.ID),
-		"agents", len(sess.Agents), "messages", len(sess.Messages))
+		"cwd", sess.Cwd, "agents", len(sess.Agents), "messages", len(sess.Messages))
 	return nil
 }
 
@@ -167,7 +170,7 @@ func (s *Store) Load(id string) (*Session, error) {
 		debug.Warn("session", "unsupported version", "id", id, "version", sess.Version)
 		return nil, fmt.Errorf("session: %q has unsupported format version %d", id, sess.Version)
 	}
-	debug.Info("session", "loaded", "id", id, "version", sess.Version,
+	debug.Info("session", "loaded", "id", id, "version", sess.Version, "cwd", sess.Cwd,
 		"agents", len(sess.Agents), "messages", len(sess.Messages), "active", sess.Active)
 	return &sess, nil
 }
@@ -196,12 +199,50 @@ func (s *Store) List() ([]Meta, error) {
 			continue
 		}
 		metas = append(metas, Meta{
-			ID: sess.ID, Title: sess.Title, Model: sess.Model,
+			ID: sess.ID, Title: sess.Title, Model: sess.Model, Cwd: sess.Cwd,
 			CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt, Count: len(sess.Messages),
 		})
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].UpdatedAt.After(metas[j].UpdatedAt) })
+	debug.Debug("session", "listed", "count", len(metas))
 	return metas, nil
+}
+
+// ListForCwd returns metadata for sessions recorded in cwd, newest first. Legacy
+// sessions that recorded no path are always included so pre-scoping conversations
+// are never hidden. An empty cwd returns every session (see List).
+func (s *Store) ListForCwd(cwd string) ([]Meta, error) {
+	all, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	cwd = normalizeCwd(cwd)
+	if cwd == "" {
+		debug.Debug("session", "list for cwd", "cwd", "", "matched", len(all), "total", len(all))
+		return all, nil
+	}
+	var metas []Meta
+	var legacy int
+	for _, m := range all {
+		switch {
+		case m.Cwd == "":
+			legacy++
+			metas = append(metas, m)
+		case normalizeCwd(m.Cwd) == cwd:
+			metas = append(metas, m)
+		}
+	}
+	debug.Debug("session", "list for cwd", "cwd", cwd,
+		"matched", len(metas), "legacy", legacy, "total", len(all))
+	return metas, nil
+}
+
+func normalizeCwd(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return ""
+	}
+	return filepath.Clean(cwd)
 }
 
 var unsafeChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)

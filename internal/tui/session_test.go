@@ -121,6 +121,38 @@ func TestResumeListsSavedInPicker(t *testing.T) {
 	}
 }
 
+func TestResumeScopedToCurrentFolder(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+
+	ag := seededAgent([]llm.Message{{Role: llm.RoleUser, Content: "in folder a"}})
+	m := &model{
+		agent: ag, md: newRenderer(80), width: 80, height: 24,
+		workspaces: []*workspace{{id: 0, cwd: "/folder/a", agent: ag}}, active: 0,
+	}
+	if status, _ := m.handleCommand("/save mine"); status != "" {
+		t.Fatalf("/save failed: %q", status)
+	}
+
+	// A conversation recorded in another folder must not show up by default.
+	store, _ := session.Open()
+	if err := store.Save(&session.Session{ID: "elsewhere", Cwd: "/folder/b", Messages: conversation()}); err != nil {
+		t.Fatal(err)
+	}
+
+	m.handleCommand("/resume")
+	if m.picker == nil {
+		t.Fatal("/resume should open a picker")
+	}
+	if view := m.picker.View(); !strings.Contains(view, "mine") || strings.Contains(view, "elsewhere") {
+		t.Fatalf("/resume should list only this folder's conversation, got:\n%s", view)
+	}
+
+	m.handleCommand("/resume --all")
+	if view := m.picker.View(); !strings.Contains(view, "mine") || !strings.Contains(view, "elsewhere") {
+		t.Fatalf("/resume --all should list every folder's conversation, got:\n%s", view)
+	}
+}
+
 func TestResumeMissingReportsError(t *testing.T) {
 	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
 	m := &model{agent: seededAgent(nil), md: newRenderer(80), width: 80}

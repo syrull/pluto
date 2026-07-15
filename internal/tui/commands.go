@@ -13,7 +13,7 @@ var slashCommands = []widgets.Command{
 	{Name: "/close", Desc: "close the active agent"},
 	{Name: "/dash", Desc: "open the dashboard"},
 	{Name: "/save", Args: "[name]", Desc: "save the current conversation"},
-	{Name: "/resume", Args: "[id]", Desc: "resume a saved conversation"},
+	{Name: "/resume", Args: "[id|--all]", Desc: "resume a conversation from this folder (--all: any folder)"},
 	{Name: "/login", Desc: "authenticate with Anthropic"},
 	{Name: "/model", Args: "[name]", Desc: "switch the active model"},
 	{Name: "/think", Args: "[level]", Desc: "set the extended-thinking level"},
