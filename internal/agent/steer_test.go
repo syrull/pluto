@@ -64,7 +64,7 @@ func TestSteerInjectedAfterToolResult(t *testing.T) {
 		}
 	}
 
-	if _, err := a.Run(context.Background(), "go", func(Event) {}); err != nil {
+	if _, err := a.Run(context.Background(), "go", nil, func(Event) {}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -96,7 +96,7 @@ func TestSteerContinuesAfterFinalReply(t *testing.T) {
 		}
 	}
 
-	out, err := a.Run(context.Background(), "start", func(Event) {})
+	out, err := a.Run(context.Background(), "start", nil, func(Event) {})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestTakeSteeringDrains(t *testing.T) {
 	a.Steer("one")
 	a.Steer("two")
 	got := a.TakeSteering()
-	if len(got) != 2 || got[0] != "one" || got[1] != "two" {
+	if len(got) != 2 || got[0].Text != "one" || got[1].Text != "two" {
 		t.Fatalf("TakeSteering = %v, want [one two]", got)
 	}
 	if a.hasSteering() {

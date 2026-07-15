@@ -45,7 +45,7 @@ func TestGateBlocksBash(t *testing.T) {
 	a, _ := bashAgent(t, "rm -rf /", fixedGate{ReviewResult{Allowed: false, Source: "guard", Reason: "nope"}})
 
 	var evs []Event
-	if _, err := a.Run(context.Background(), "go", func(e Event) { evs = append(evs, e) }); err != nil {
+	if _, err := a.Run(context.Background(), "go", nil, func(e Event) { evs = append(evs, e) }); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestGateAllowsBash(t *testing.T) {
 	a, _ := bashAgent(t, "echo hi", fixedGate{ReviewResult{Allowed: true, Source: "fast-path"}})
 
 	var evs []Event
-	if _, err := a.Run(context.Background(), "go", func(e Event) { evs = append(evs, e) }); err != nil {
+	if _, err := a.Run(context.Background(), "go", nil, func(e Event) { evs = append(evs, e) }); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := kinds(evs); got != "tool_review,tool_call,tool_result,text" {
@@ -83,7 +83,7 @@ func TestGateAllowsBash(t *testing.T) {
 func TestNoGateNoReview(t *testing.T) {
 	a, _ := bashAgent(t, "echo hi", nil)
 	var evs []Event
-	if _, err := a.Run(context.Background(), "go", func(e Event) { evs = append(evs, e) }); err != nil {
+	if _, err := a.Run(context.Background(), "go", nil, func(e Event) { evs = append(evs, e) }); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := kinds(evs); got != "tool_call,tool_result,text" {

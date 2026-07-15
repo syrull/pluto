@@ -16,10 +16,30 @@ const (
 	RoleTool   Role = "tool"
 )
 
+// AttachmentImage is the Kind of an image Attachment.
+const AttachmentImage = "image"
+
+// Attachment is a non-text part carried on a RoleUser Message — currently an
+// image sent to a vision-capable model. Data holds the raw bytes (base64 on the
+// wire, via encoding/json's []byte handling) so attachments persist with saved
+// sessions.
+type Attachment struct {
+	// Kind classifies the attachment; only AttachmentImage is defined today.
+	Kind string `json:"kind"`
+	// MediaType is the IANA media type, e.g. "image/png" or "image/jpeg".
+	MediaType string `json:"media_type"`
+	// Data is the raw, decoded bytes of the attachment.
+	Data []byte `json:"data"`
+	// Name is an optional display label (e.g. the source filename), for UIs.
+	Name string `json:"name,omitempty"`
+}
+
 // Message is a single entry in the conversation transcript.
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
+	// Attachments are non-text parts (e.g. images) accompanying a RoleUser turn.
+	Attachments []Attachment `json:"attachments,omitempty"`
 	// ToolName is set on RoleTool messages to identify which tool produced
 	// the content.
 	ToolName string `json:"tool_name,omitempty"`

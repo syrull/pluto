@@ -14,6 +14,7 @@ import (
 
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/diff"
+	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
@@ -59,8 +60,9 @@ func (m *model) renderMarkdown(src string) string {
 }
 
 // renderUserLine wraps a user message to the viewport width, indenting
-// continuation lines under the prompt so multi-line input doesn't run off screen.
-func (m *model) renderUserLine(in string) string {
+// continuation lines under the prompt so multi-line input doesn't run off
+// screen, and appends a chip when the turn carries image attachments.
+func (m *model) renderUserLine(in string, atts ...llm.Attachment) string {
 	w := m.contentWidth()
 	const prefix = "› "
 	w -= len(prefix)
@@ -76,6 +78,9 @@ func (m *model) renderUserLine(in string) string {
 		} else {
 			lines[i] = indent + ln
 		}
+	}
+	if chip := attachmentChip(atts); chip != "" {
+		lines = append(lines, indent+styleHint.Render(chip))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -308,6 +313,10 @@ func (m model) modelStatus() string {
 		mouse = "mouse: on"
 	}
 	add(styleStatusMouse.Render(mouse), mouse)
+
+	if chip := attachmentChip(m.attachments); chip != "" {
+		add(styleStatusAttach.Render(chip), chip)
+	}
 
 	if m.git.isRepo {
 		raw := "⎇ " + m.git.branchLine()

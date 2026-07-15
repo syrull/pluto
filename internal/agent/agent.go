@@ -91,8 +91,15 @@ type Agent struct {
 	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
 	contextLimit int       // token budget for the re-sent transcript; 0 ⇒ derive from window
 
-	steerMu sync.Mutex // guards steer
-	steer   []string   // user messages queued to fold into a running turn
+	steerMu sync.Mutex     // guards steer
+	steer   []SteerMessage // user messages queued to fold into a running turn
+}
+
+// SteerMessage is a user turn queued to fold into a running turn: its text plus
+// any attachments (e.g. images) that should ride along with it.
+type SteerMessage struct {
+	Text        string
+	Attachments []llm.Attachment
 }
 
 // New constructs an Agent seeded with an optional system prompt.
@@ -148,18 +155,19 @@ func (a *Agent) Load(msgs []llm.Message) {
 	a.lastUsage = llm.Usage{InputTokens: estimateTokens(a.transcript)}
 }
 
-// Steer queues a user message to fold into a running turn at the next step
-// boundary, letting the user redirect the agent mid-task. It is safe to call
-// concurrently with Run; a message sent while Run is idle is picked up by the
-// next Run. The UI drains any leftover with TakeSteering once a Run ends.
-func (a *Agent) Steer(input string) {
+// Steer queues a user message (with optional attachments) to fold into a running
+// turn at the next step boundary, letting the user redirect the agent mid-task.
+// It is safe to call concurrently with Run; a message sent while Run is idle is
+// picked up by the next Run. The UI drains any leftover with TakeSteering once a
+// Run ends.
+func (a *Agent) Steer(input string, attachments ...llm.Attachment) {
 	a.steerMu.Lock()
-	a.steer = append(a.steer, input)
+	a.steer = append(a.steer, SteerMessage{Text: input, Attachments: attachments})
 	a.steerMu.Unlock()
 }
 
 // TakeSteering removes and returns the queued steering messages, if any.
-func (a *Agent) TakeSteering() []string {
+func (a *Agent) TakeSteering() []SteerMessage {
 	a.steerMu.Lock()
 	defer a.steerMu.Unlock()
 	q := a.steer
@@ -179,8 +187,10 @@ func (a *Agent) hasSteering() bool {
 func (a *Agent) injectSteering() bool {
 	msgs := a.TakeSteering()
 	for _, msg := range msgs {
-		debug.Logf("agent", "steer input=%q", truncate(msg, 256))
-		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: msg})
+		debug.Logf("agent", "steer input=%q attachments=%d", truncate(msg.Text, 256), len(msg.Attachments))
+		a.transcript = append(a.transcript, llm.Message{
+			Role: llm.RoleUser, Content: msg.Text, Attachments: msg.Attachments,
+		})
 	}
 	if len(msgs) > 0 {
 		a.trimTranscript()
@@ -243,10 +253,10 @@ func (a *Agent) specs() []llm.ToolSpec {
 	return specs
 }
 
-// Run processes one user input to completion.
-func (a *Agent) Run(ctx context.Context, input string, emit func(Event)) (string, error) {
-	debug.Logf("agent", "run input=%q provider=%s", truncate(input, 256), a.provider.Name())
-	a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: input})
+// Run processes one user input (with optional attachments) to completion.
+func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachment, emit func(Event)) (string, error) {
+	debug.Logf("agent", "run input=%q attachments=%d provider=%s", truncate(input, 256), len(attachments), a.provider.Name())
+	a.transcript = append(a.transcript, llm.Message{Role: llm.RoleUser, Content: input, Attachments: attachments})
 	a.trimTranscript()
 
 	for step := range maxSteps {
@@ -428,18 +438,27 @@ func (a *Agent) trimTranscript() {
 	a.transcript = trimmed
 }
 
+// imageTokenEstimate is a nominal per-image token cost for the trim heuristic.
+// Image tokens scale with pixel dimensions, not byte size, so counting the raw
+// (base64) bytes would wildly overstate them; a flat nominal cost keeps a
+// picture-heavy transcript trimmable without that distortion.
+const imageTokenEstimate = 1600
+
 // estimateTokens approximates the token size of a slice of messages. Without a
 // local tokenizer it uses a bytes/4 heuristic over all content that gets re-sent
-// (text, thinking, and tool-call arguments), plus a small per-message overhead.
+// (text, thinking, and tool-call arguments), plus a small per-message overhead
+// and a nominal per-attachment cost.
 func estimateTokens(msgs []llm.Message) int {
 	chars := 0
+	tokens := 0
 	for _, m := range msgs {
 		chars += len(m.Content) + len(m.Thinking) + 16
 		for _, c := range m.ToolCalls {
 			chars += len(c.Args) + len(c.Name)
 		}
+		tokens += len(m.Attachments) * imageTokenEstimate
 	}
-	return chars / 4
+	return chars/4 + tokens
 }
 
 func (a *Agent) generate(ctx context.Context, emit func(Event)) (resp llm.Response, streamed bool, err error) {

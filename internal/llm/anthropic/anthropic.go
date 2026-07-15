@@ -3,6 +3,7 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -233,12 +234,23 @@ type wireMessage struct {
 	Content []wireBlock `json:"content"`
 }
 
+// wireImageSource is an image block's source: base64-inlined bytes with a media
+// type. (A "url" source is also valid but pluto only sends local bytes.)
+type wireImageSource struct {
+	Type      string `json:"type"` // "base64"
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
+}
+
 // wireBlock is a content block; omitempty keeps JSON valid for each variant.
 type wireBlock struct {
-	Type string `json:"type"` // text | tool_use | tool_result
+	Type string `json:"type"` // text | image | tool_use | tool_result
 
 	// text
 	Text string `json:"text,omitempty"`
+
+	// image
+	Source *wireImageSource `json:"source,omitempty"`
 
 	// tool_use
 	ID    string          `json:"id,omitempty"`
@@ -309,7 +321,7 @@ func (p *Provider) buildRequest(transcript []llm.Message, tools []llm.ToolSpec, 
 		Model:     p.model,
 		MaxTokens: p.maxTok,
 		System:    p.buildSystem(transcript),
-		Messages:  buildMessages(transcript),
+		Messages:  buildMessages(transcript, visionFor(p.model)),
 		Tools:     buildTools(tools),
 		Stream:    stream,
 	}
@@ -451,8 +463,10 @@ func (p *Provider) buildSystem(transcript []llm.Message) []wireSysText {
 	return blocks
 }
 
-// buildMessages translates the transcript into alternating user/assistant messages.
-func buildMessages(transcript []llm.Message) []wireMessage {
+// buildMessages translates the transcript into alternating user/assistant
+// messages. vision reports whether the active model accepts image blocks; when
+// false, attachments are dropped so a non-vision model isn't sent a 400.
+func buildMessages(transcript []llm.Message, vision bool) []wireMessage {
 	var out []wireMessage
 	for _, m := range transcript {
 		switch m.Role {
@@ -463,11 +477,11 @@ func buildMessages(transcript []llm.Message) []wireMessage {
 			// earlier user turn) so a steering message folded in after tool
 			// results doesn't produce two consecutive user turns, which the API
 			// rejects. Text after tool_result blocks is valid.
-			block := wireBlock{Type: "text", Text: m.Content}
+			blocks := userBlocks(m, vision)
 			if n := len(out); n > 0 && out[n-1].Role == "user" {
-				out[n-1].Content = append(out[n-1].Content, block)
+				out[n-1].Content = append(out[n-1].Content, blocks...)
 			} else {
-				out = append(out, wireMessage{Role: "user", Content: []wireBlock{block}})
+				out = append(out, wireMessage{Role: "user", Content: blocks})
 			}
 		case llm.RoleModel:
 			blocks := make([]wireBlock, 0, 2+len(m.ToolCalls))
@@ -499,6 +513,44 @@ func buildMessages(transcript []llm.Message) []wireMessage {
 		}
 	}
 	return out
+}
+
+// userBlocks renders a user turn as image blocks (when the model supports
+// vision) followed by a text block. The text block is kept whenever there is
+// text, or when no image block was emitted, so a text-only turn always carries
+// its (possibly empty) text just as before.
+func userBlocks(m llm.Message, vision bool) []wireBlock {
+	var blocks []wireBlock
+	if vision {
+		for _, att := range m.Attachments {
+			if b, ok := imageBlock(att); ok {
+				blocks = append(blocks, b)
+			}
+		}
+	}
+	if m.Content != "" || len(blocks) == 0 {
+		blocks = append(blocks, wireBlock{Type: "text", Text: m.Content})
+	}
+	return blocks
+}
+
+// imageBlock builds a base64 image block from an attachment, reporting false for
+// a non-image or malformed attachment so it is skipped rather than sent invalid.
+func imageBlock(att llm.Attachment) (wireBlock, bool) {
+	if att.Kind != "" && att.Kind != llm.AttachmentImage {
+		return wireBlock{}, false
+	}
+	if att.MediaType == "" || len(att.Data) == 0 {
+		return wireBlock{}, false
+	}
+	return wireBlock{
+		Type: "image",
+		Source: &wireImageSource{
+			Type:      "base64",
+			MediaType: att.MediaType,
+			Data:      base64.StdEncoding.EncodeToString(att.Data),
+		},
+	}, true
 }
 
 // isToolResultCarrier reports whether a user message contains only tool_result blocks.

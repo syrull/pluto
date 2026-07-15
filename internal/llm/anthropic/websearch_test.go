@@ -247,7 +247,7 @@ func TestBuildMessagesToolResultRoundTrips(t *testing.T) {
 		{Role: llm.RoleTool, ToolCallID: "t1", ToolName: "read", Content: "result text"},
 	}
 
-	msgs := buildMessages(transcript)
+	msgs := buildMessages(transcript, true)
 
 	// Find the tool_result block in the last message (should be coalesced into the tool-result user message).
 	var toolResultBlock wireBlock
