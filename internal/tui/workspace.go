@@ -118,13 +118,17 @@ func (m *model) unstash(i int) {
 // onWorkspace runs fn with the model's per-agent fields temporarily loaded from
 // workspace i, restoring the active workspace afterward. When i is already active
 // fn runs directly. This lets the existing single-workspace handlers mutate a
-// background workspace without a second code path.
+// background workspace without a second code path. While swapped in, syncViewport
+// is suppressed so a background handler can't repaint the visible transcript with
+// the background agent's conversation.
 func (m *model) onWorkspace(i int, fn func()) {
 	if i == m.active || m.workspaceAt(i) == nil {
 		fn()
 		return
 	}
 	saved := m.active
+	prevSwapped := m.swapped
+	m.swapped = true
 	m.stash(saved)
 	m.active = i
 	m.unstash(i)
@@ -132,6 +136,7 @@ func (m *model) onWorkspace(i int, fn func()) {
 	m.stash(i)
 	m.active = saved
 	m.unstash(saved)
+	m.swapped = prevSwapped
 }
 
 // switchTo makes workspace i active: the visible transcript, sidebar, and

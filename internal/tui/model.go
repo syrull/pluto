@@ -172,8 +172,12 @@ type model struct {
 	// spawned workspace (same provider/tools/config); nextID hands out ids.
 	workspaces []*workspace
 	active     int
-	nextID     int
-	newAgent   func() *agent.Agent
+	// swapped is true while onWorkspace has a background workspace temporarily
+	// loaded into the live fields; syncViewport is a no-op then so a background
+	// turn finishing never repaints the visible (real active) transcript.
+	swapped  bool
+	nextID   int
+	newAgent func() *agent.Agent
 	// summarize, when set, produces a short one-shot label for an agent after its
 	// first completed turn; nil falls back to a label derived from the first message.
 	summarize func(ctx context.Context, prompt string) (string, error)
@@ -340,7 +344,7 @@ func (m model) transcript() string {
 }
 
 func (m *model) syncViewport() {
-	if !m.ready {
+	if !m.ready || m.swapped {
 		return
 	}
 	atBottom := m.vp.AtBottom()
