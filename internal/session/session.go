@@ -141,7 +141,7 @@ func (s *Store) Save(sess *Session) error {
 		return fmt.Errorf("session: rename: %w", err)
 	}
 	debug.Info("session", "saved", "id", sess.ID, "path", s.path(sess.ID),
-		"agents", len(sess.Agents), "messages", len(sess.Messages))
+		"cwd", sess.Cwd, "agents", len(sess.Agents), "messages", len(sess.Messages))
 	return nil
 }
 
@@ -170,7 +170,7 @@ func (s *Store) Load(id string) (*Session, error) {
 		debug.Warn("session", "unsupported version", "id", id, "version", sess.Version)
 		return nil, fmt.Errorf("session: %q has unsupported format version %d", id, sess.Version)
 	}
-	debug.Info("session", "loaded", "id", id, "version", sess.Version,
+	debug.Info("session", "loaded", "id", id, "version", sess.Version, "cwd", sess.Cwd,
 		"agents", len(sess.Agents), "messages", len(sess.Messages), "active", sess.Active)
 	return &sess, nil
 }
@@ -204,6 +204,7 @@ func (s *Store) List() ([]Meta, error) {
 		})
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].UpdatedAt.After(metas[j].UpdatedAt) })
+	debug.Debug("session", "listed", "count", len(metas))
 	return metas, nil
 }
 
@@ -217,14 +218,22 @@ func (s *Store) ListForCwd(cwd string) ([]Meta, error) {
 	}
 	cwd = normalizeCwd(cwd)
 	if cwd == "" {
+		debug.Debug("session", "list for cwd", "cwd", "", "matched", len(all), "total", len(all))
 		return all, nil
 	}
 	var metas []Meta
+	var legacy int
 	for _, m := range all {
-		if m.Cwd == "" || normalizeCwd(m.Cwd) == cwd {
+		switch {
+		case m.Cwd == "":
+			legacy++
+			metas = append(metas, m)
+		case normalizeCwd(m.Cwd) == cwd:
 			metas = append(metas, m)
 		}
 	}
+	debug.Debug("session", "list for cwd", "cwd", cwd,
+		"matched", len(metas), "legacy", legacy, "total", len(all))
 	return metas, nil
 }
 

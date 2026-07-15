@@ -184,6 +184,11 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			if err != nil {
 				return styleErr.Render("✗ " + err.Error()), nil
 			}
+			scope := "folder"
+			if all {
+				scope = "all"
+			}
+			debug.Debug(dbgTUI, "resume list", "scope", scope, "cwd", m.sessionCwd(), "count", len(metas))
 			if len(metas) == 0 {
 				hint := "no saved conversations for this folder — use /save, or /resume --all to list every folder"
 				if all {
