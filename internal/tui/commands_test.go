@@ -206,6 +206,49 @@ func TestSlashInFilesPaneDoesNotOpenCommandMenu(t *testing.T) {
 	}
 }
 
+// TestSlashCommandNotEchoedIntoTranscript guards issue #55: submitting a TUI
+// action command (e.g. /model — /image is the documented exception) dispatches
+// it without pushing the command text into the conversation, while still
+// surfacing any command status/output.
+func TestSlashCommandNotEchoedIntoTranscript(t *testing.T) {
+	m := newTestModel(t)
+	// Seed a prior line so we can assert the command adds nothing to it.
+	got := m.(model)
+	got.lines = []entry{{text: "prior message"}}
+	m = got
+
+	// The trailing space closes the completion menu so Enter submits.
+	m = typeInto(m, "/model ")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got = m.(model)
+
+	if got.input.Value() != "" {
+		t.Fatalf("input should reset after submitting a command, got %q", got.input.Value())
+	}
+	for _, e := range got.lines {
+		if strings.Contains(e.text, "/model") {
+			t.Fatalf("slash command should not be echoed into the transcript, got line %q", e.text)
+		}
+	}
+	// The command's status output is still shown (stub provider can't switch models).
+	if joined := got.transcript(); !strings.Contains(joined, "does not support model switching") {
+		t.Fatalf("command status should still be shown, got:\n%s", joined)
+	}
+}
+
+// TestRegularMessageEchoedAsUserLine confirms non-command input still renders as
+// a user line, so the #55 fix doesn't swallow real messages.
+func TestRegularMessageEchoedAsUserLine(t *testing.T) {
+	m := newTestModel(t)
+	m = typeInto(m, "hello there")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	got := m.(model)
+
+	if !strings.Contains(got.transcript(), "hello there") {
+		t.Fatalf("a regular message should appear as a user line, got:\n%s", got.transcript())
+	}
+}
+
 // TestSlashCommandsMatchDispatch guards the registry against drift: every case
 // in handleCommand must have a registry entry and vice versa.
 func TestSlashCommandsMatchDispatch(t *testing.T) {
