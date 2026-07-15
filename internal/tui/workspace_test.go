@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/syrull/pluto/internal/agent"
@@ -227,6 +228,34 @@ func TestBackgroundCompletionAutosavesRealActive(t *testing.T) {
 	}
 	if len(sess.Agents) != 2 {
 		t.Fatalf("autosave should record both agents, got %d", len(sess.Agents))
+	}
+}
+
+func TestBackgroundCompletionKeepsActiveViewport(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+	m := multiModel(2)
+	m.ready = true
+	m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(10))
+
+	m.switchTo(1)
+	m.lines = []entry{{text: "AGENT B TRANSCRIPT"}}
+	m.syncViewport()
+
+	m.workspaces[0].lines = []entry{{text: "AGENT A TRANSCRIPT"}}
+	m.workspaces[0].busy = true
+
+	updated, _ := (*m).Update(doneMsg{id: 0})
+	got := updated.(model)
+
+	if got.active != 1 {
+		t.Fatalf("background completion must not change the active agent, got %d", got.active)
+	}
+	content := got.vp.GetContent()
+	if strings.Contains(content, "AGENT A") {
+		t.Fatalf("viewport must not swap to the finished background agent, got:\n%s", content)
+	}
+	if !strings.Contains(content, "AGENT B TRANSCRIPT") {
+		t.Fatalf("viewport should still show the active agent, got:\n%s", content)
 	}
 }
 
