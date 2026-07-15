@@ -18,6 +18,7 @@ var slashCommands = []widgets.Command{
 	{Name: "/think", Args: "[level]", Desc: "set the extended-thinking level"},
 	{Name: "/auto", Args: "[on|off]", Desc: "toggle auto mode"},
 	{Name: "/gh", Desc: "open the GitHub browser"},
+	{Name: "/image", Args: "<path>", Desc: "attach a picture to your next message"},
 }
 
 // cmdMenuStyle styles the slash-command autocomplete popup: magenta command
