@@ -80,9 +80,6 @@ API keys, auth headers) are never written** — they are redacted in the auth pa
 | `PLUTO_DEBUG_COMPONENTS` | comma list, `-` to exclude | all | Filter by subsystem, e.g. `tui,agent` (only those) or `-llm` (all but llm). |
 | `PLUTO_DEBUG_FRAMES` | `off`\|`coalesced`\|`full` | `coalesced` | UI frame logging (needs `trace`). `coalesced` collapses identical frames to `frame unchanged repeated=N`; `full` also dumps the rendered screen. |
 
-Components include: `lifecycle`, `reposcan`, `tui`, `agent`, `tool`, `llm`,
-`session`, `auth`, `policy`, `judge`, `guard`, `update`.
-
 ### Capturing a log for an issue
 
 To trace a graphical bug frame by frame without drowning in LLM payloads:
