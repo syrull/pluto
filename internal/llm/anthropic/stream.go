@@ -196,12 +196,16 @@ func parseSSE(r io.Reader, idle time.Duration, cancel context.CancelFunc, onDelt
 					ID: acc.toolID, Name: acc.toolName, Args: json.RawMessage(args),
 				})
 			case "server_tool_use":
-				// Server-side (e.g. web search); surface the query for display.
-				args := acc.json.String()
-				if args == "" {
-					args = "{}"
+				// Server-side tools run within the turn. Only web search is
+				// enabled and has a matching result branch below; ignore any
+				// other server tool so we never surface a call without a result.
+				if acc.toolName != webSearchToolName {
+					break
 				}
-				onDelta(llm.StreamDelta{Kind: llm.DeltaServerToolCall, Tool: acc.toolName, Text: args})
+				onDelta(llm.StreamDelta{
+					Kind: llm.DeltaServerToolCall, Tool: webSearchToolName,
+					Text: serverToolArgs(acc.json.String()),
+				})
 			case "web_search_tool_result":
 				onDelta(llm.StreamDelta{
 					Kind: llm.DeltaServerToolResult, Tool: webSearchToolName,

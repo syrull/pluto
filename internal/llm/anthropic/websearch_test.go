@@ -176,6 +176,7 @@ func TestWebSearchResultSummary(t *testing.T) {
 	}{
 		{"two results", `[{"type":"web_search_result","url":"https://a.com","title":"A"},{"type":"web_search_result","url":"https://b.com","title":"B"}]`, "A (https://a.com)\nB (https://b.com)"},
 		{"title falls back to url", `[{"type":"web_search_result","url":"https://a.com","title":""}]`, "https://a.com"},
+		{"whitespace in title collapsed to one line", `[{"type":"web_search_result","url":"https://a.com","title":"Multi\nline\ttitle"}]`, "Multi line title (https://a.com)"},
 		{"empty list", `[]`, "no results"},
 		{"missing content", ``, "no results"},
 		{"error object", `{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}`, "error: max_uses_exceeded"},
@@ -187,6 +188,39 @@ func TestWebSearchResultSummary(t *testing.T) {
 				t.Fatalf("webSearchResultSummary(%q) = %q, want %q", tt.raw, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestServerToolArgsDefaultsToEmptyObject(t *testing.T) {
+	if got := serverToolArgs(""); got != "{}" {
+		t.Fatalf("serverToolArgs(\"\") = %q, want {}", got)
+	}
+	if got := serverToolArgs(`{"query":"go"}`); got != `{"query":"go"}` {
+		t.Fatalf("serverToolArgs preserved input incorrectly: %q", got)
+	}
+}
+
+// A server_tool_use block with no input must still surface Args as "{}" so the
+// call line renders identically to the streaming path.
+func TestMapResponseServerToolUseMissingInputDefaultsArgs(t *testing.T) {
+	respJSON := `{
+		"content": [
+			{"type": "server_tool_use", "id": "search_1", "name": "web_search"},
+			{"type": "web_search_tool_result", "id": "search_1", "content": [
+				{"type": "web_search_result", "url": "https://go.dev", "title": "Go"}
+			]}
+		]
+	}`
+	var wire wireResponse
+	if err := json.Unmarshal([]byte(respJSON), &wire); err != nil {
+		t.Fatalf("json.Unmarshal wireResponse: %v", err)
+	}
+	resp := mapResponse(wire)
+	if len(resp.ServerToolUses) != 1 {
+		t.Fatalf("resp.ServerToolUses = %d, want 1", len(resp.ServerToolUses))
+	}
+	if got := resp.ServerToolUses[0].Args; got != "{}" {
+		t.Fatalf("ServerToolUse.Args = %q, want {}", got)
 	}
 }
 
@@ -299,6 +333,34 @@ data: {"type":"message_stop"}
 	}
 	if callIdx == -1 || textAfterIdx == -1 || callIdx > textAfterIdx {
 		t.Fatalf("web search deltas must precede the trailing answer text (call=%d textAfter=%d)", callIdx, textAfterIdx)
+	}
+}
+
+// A server_tool_use for a tool other than web search has no matching result
+// branch, so it must not surface a (dangling) call delta.
+func TestParseSSEIgnoresNonWebSearchServerTool(t *testing.T) {
+	sseStream := `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"exec_1","name":"code_execution"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"code\":\"print(1)\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_stop
+data: {"type":"message_stop"}
+`
+	var deltas []llm.StreamDelta
+	if _, err := parseSSE(strings.NewReader(sseStream), time.Minute, func() {}, func(d llm.StreamDelta) {
+		deltas = append(deltas, d)
+	}); err != nil {
+		t.Fatalf("parseSSE: %v", err)
+	}
+	for _, d := range deltas {
+		if d.Kind == llm.DeltaServerToolCall || d.Kind == llm.DeltaServerToolResult {
+			t.Fatalf("non-web-search server tool should not surface deltas, got %+v", d)
+		}
 	}
 }
 

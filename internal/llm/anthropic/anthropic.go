@@ -599,7 +599,11 @@ func mapResponse(wire wireResponse) llm.Response {
 			})
 		case "server_tool_use":
 			// Executed by the API within this turn; surfaced for display only.
-			pendingSearch = string(rawOrNull(b.Input))
+			// Only web search is enabled and paired with a result below, so
+			// ignore any other server tool to avoid mispairing its args.
+			if b.Name == webSearchToolName {
+				pendingSearch = serverToolArgs(string(b.Input))
+			}
 		case "web_search_tool_result":
 			out.ServerToolUses = append(out.ServerToolUses, llm.ServerToolUse{
 				Name: webSearchToolName, Args: pendingSearch, Result: webSearchResultSummary(b.Content),
@@ -620,6 +624,23 @@ type wireWebSearchResult struct {
 	Title string `json:"title"`
 }
 
+// serverToolArgs normalizes a server tool's JSON input for display, defaulting
+// to an empty object when the provider omits it so the two decode paths
+// (streaming and non-streaming) render identically.
+func serverToolArgs(input string) string {
+	if input == "" {
+		return "{}"
+	}
+	return input
+}
+
+// collapseWhitespace flattens runs of whitespace (including newlines) to single
+// spaces so a result's title/url can't spill onto extra lines; the TUI derives
+// the result count from the number of lines in the summary.
+func collapseWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // webSearchResultSummary renders a web_search_tool_result block's content as a
 // short, human-readable list of "title (url)" lines, one per result, or a note
 // when the search errored or returned nothing.
@@ -637,14 +658,16 @@ func webSearchResultSummary(raw json.RawMessage) string {
 			if i > 0 {
 				b.WriteByte('\n')
 			}
-			title := r.Title
+			// Collapse internal whitespace so each result stays on one line.
+			title := collapseWhitespace(r.Title)
+			url := collapseWhitespace(r.URL)
 			if title == "" {
-				title = r.URL
+				title = url
 			}
 			b.WriteString(title)
-			if r.URL != "" && r.URL != title {
+			if url != "" && url != title {
 				b.WriteString(" (")
-				b.WriteString(r.URL)
+				b.WriteString(url)
 				b.WriteByte(')')
 			}
 		}
