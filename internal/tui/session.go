@@ -212,6 +212,26 @@ func (m *model) autosave() {
 	_ = store.Save(sess)
 }
 
+// persistClosed rewrites the active saved session after an agent is closed so
+// the removed agent doesn't reappear on resume. It only touches a session that
+// was already saved (sessionName set) and, unlike autosave, doesn't require a
+// remaining conversation — closing back down to empty agents still updates the file.
+func (m *model) persistClosed() {
+	if !autosaveEnabled() || m.sessionName == "" {
+		return
+	}
+	store, err := m.sessionStore()
+	if err != nil {
+		return
+	}
+	sess := m.buildSession(m.sessionName)
+	m.sessionName = sess.ID
+	if prev, err := store.Load(m.sessionName); err == nil {
+		sess.CreatedAt = prev.CreatedAt
+	}
+	_ = store.Save(sess)
+}
+
 // rebuildFromMessages replays a loaded transcript through the same render
 // helpers the live stream uses, reconstructing the visible history — user
 // turns, thinking, markdown (with code-copy affordances), tool calls, and tool

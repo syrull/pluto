@@ -361,6 +361,18 @@ func (m *model) agentsKey(ks string) (bool, tea.Cmd) {
 		return true, m.switchTo(m.agentsCursor)
 	case "n":
 		return true, m.promptNewAgent()
+	case "d", "x":
+		// Close the agent under the cursor: focus it first so the shared
+		// close flow (which acts on the active agent) tears down the right one.
+		if m.agentsCursor >= newRow {
+			return true, nil
+		}
+		var cmds []tea.Cmd
+		if m.agentsCursor != m.active {
+			cmds = append(cmds, m.switchTo(m.agentsCursor))
+		}
+		cmds = append(cmds, m.promptClose())
+		return true, tea.Batch(cmds...)
 	case "-":
 		m.toggleCollapse(paneAgents)
 	case "esc":
@@ -675,7 +687,7 @@ func (m model) sidebarView(height int) string {
 
 	hintText := "tab pane · ↑/↓ move · ↵ open · - collapse"
 	if m.focus == paneAgents {
-		hintText = "↑/↓ move · ↵ switch · n new · - collapse"
+		hintText = "↑/↓ move · ↵ switch · n new · d close · - collapse"
 	}
 	hint := lipgloss.NewStyle().MaxWidth(sw).Render(styleHint.Render(hintText))
 	return body + "\n" + hint

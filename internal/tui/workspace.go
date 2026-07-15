@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,14 @@ import (
 const (
 	worktreeOption   = "create a git worktree (isolated)"
 	currentDirOption = "use the current directory"
+)
+
+// Choices offered by the close-agent confirmation picker.
+const (
+	closeConfirmOption        = "close the agent"
+	closeRemoveWorktreeOption = "close and remove the worktree"
+	closeKeepWorktreeOption   = "close and keep the worktree"
+	closeCancelOption         = "cancel"
 )
 
 // workspaceAt returns the workspace at index i, or nil when out of range.
@@ -253,6 +262,161 @@ func (m *model) createWorktree(id int) (string, error) {
 		return "", fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return path, nil
+}
+
+// promptClose starts the close flow for the active agent. It closes straight
+// away when nothing is at risk; otherwise (busy, dirty tree, or an owned
+// worktree) it opens a confirmation picker.
+func (m *model) promptClose() tea.Cmd {
+	if len(m.workspaces) == 0 {
+		m.notice = "✗ no agent to close"
+		return nil
+	}
+	w := m.workspaces[m.active]
+	if !m.busy && !w.worktree && len(m.git.status) == 0 {
+		return m.closeActiveAgent(false)
+	}
+	m.picker = newCloseAgentPicker(w.worktree)
+	m.picker.SetSize(m.width, m.height)
+	m.pickerKind = pickerCloseAgent
+	return nil
+}
+
+// applyClosePick acts on the close confirmation choice.
+func (m *model) applyClosePick(target string) tea.Cmd {
+	switch target {
+	case closeCancelOption:
+		m.notice = "✗ close canceled"
+		return nil
+	case closeRemoveWorktreeOption:
+		return m.closeActiveAgent(true)
+	default:
+		return m.closeActiveAgent(false)
+	}
+}
+
+// closeActiveAgent tears down the active agent: it cancels any in-flight run,
+// optionally removes its git worktree, drops the workspace, and switches to a
+// neighbor. Closing the only remaining agent resets it to a fresh default rather
+// than leaving the app with zero agents.
+func (m *model) closeActiveAgent(removeWorktree bool) tea.Cmd {
+	if len(m.workspaces) == 0 {
+		return nil
+	}
+	idx := m.active
+	w := m.workspaces[idx]
+	debug.Info(dbgTUI, "close agent", "id", w.id, "idx", idx, "worktree", w.worktree, "remove", removeWorktree)
+
+	if m.busy {
+		m.interrupt()
+		m.busy = false
+	}
+
+	removeErr := ""
+	if removeWorktree && w.worktree && w.cwd != "" {
+		if err := removeWorktreeAt(w.cwd); err != nil {
+			removeErr = err.Error()
+		} else {
+			w.worktree = false
+			w.cwd = ""
+		}
+	}
+
+	label := m.workspaceLabel(idx)
+
+	if len(m.workspaces) == 1 {
+		return m.resetLastAgent(label, removeErr)
+	}
+
+	m.workspaces = slices.Delete(m.workspaces, idx, idx+1)
+	next := idx - 1
+	if next < 0 {
+		next = 0 // closed the first agent: land on the new first
+	}
+	m.active = next
+	m.unstash(next)
+	m.workspaces[next].unread = false
+	m.agentsCursor = next
+	m.finder = nil
+	m.tree = newFileTree(m.activeCwd())
+	m.changes = nil
+	m.git = gitInfo{}
+	m.gitReady = false
+	if m.focus == paneChanges {
+		m.focus = paneTree
+	}
+	m.notice = closeNotice(label, removeErr)
+	m.orbitEpoch++
+	m.syncViewport()
+	// Drop the closed agent from the persisted session so it doesn't resume.
+	m.persistClosed()
+	cmds := []tea.Cmd{m.gatherGit()}
+	if m.showHome {
+		cmds = append(cmds, orbitTick(m.orbitEpoch))
+	}
+	return tea.Batch(cmds...)
+}
+
+// resetLastAgent clears the sole remaining agent back to a fresh conversation and
+// dashboard, mirroring /new, so closing it never leaves zero agents. A removed
+// worktree drops the agent back to the process directory.
+func (m *model) resetLastAgent(label, removeErr string) tea.Cmd {
+	if w := m.workspaceAt(m.active); w != nil {
+		w.label = ""
+		w.labeled = false
+		if w.cwd == "" {
+			if d, err := os.Getwd(); err == nil {
+				w.cwd = d
+			}
+		}
+	}
+	m.agent.Reset()
+	m.lines = nil
+	m.outputs = nil
+	m.codeBlocks = nil
+	m.pendingTool = ""
+	m.pendingArgs = ""
+	m.streamText = ""
+	m.streamThink = ""
+	m.sessionName = ""
+	m.showHome = true
+	m.finder = nil
+	m.tree = newFileTree(m.activeCwd())
+	m.changes = nil
+	m.git = gitInfo{}
+	m.gitReady = false
+	if m.focus == paneChanges {
+		m.focus = paneTree
+	}
+	m.orbitEpoch++
+	if removeErr != "" {
+		m.notice = fmt.Sprintf("✗ closed %s but worktree removal failed: %s — reset to a fresh agent", label, removeErr)
+	} else {
+		m.notice = fmt.Sprintf("✓ closed %s — reset to a fresh agent", label)
+	}
+	m.syncViewport()
+	return tea.Batch(orbitTick(m.orbitEpoch), m.gatherGit())
+}
+
+// closeNotice builds the transient notice after closing an agent, folding in a
+// worktree-removal failure when one occurred.
+func closeNotice(label, removeErr string) string {
+	if removeErr != "" {
+		return fmt.Sprintf("✗ closed %s but worktree removal failed: %s", label, removeErr)
+	}
+	return fmt.Sprintf("✓ closed %s", label)
+}
+
+// removeWorktreeAt removes the git worktree rooted at path (force-removing it so
+// a dirty tree is still cleaned up once the user has confirmed).
+func removeWorktreeAt(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", path, "worktree", "remove", "--force", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // gatherGit refreshes git state for the active agent's directory.

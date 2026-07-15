@@ -243,6 +243,7 @@ const (
 	pickerThink
 	pickerResume
 	pickerNewAgent
+	pickerCloseAgent
 )
 
 // inputHeight is the fixed number of visible rows in the input box; longer

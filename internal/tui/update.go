@@ -149,6 +149,10 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.notice = "✓ started a new conversation"
 		return "", orbitTick(m.orbitEpoch)
 
+	case "/close":
+		// Closes (deletes) the active agent, tearing down its run and workspace.
+		return "", m.promptClose()
+
 	case "/dash":
 		m.showHome = true
 		// Restart the animation loop under a fresh epoch so any stale tick stops.
@@ -881,6 +885,8 @@ func (m *model) applyPick(kind pickerKind, target string) tea.Cmd {
 		return m.resume(target)
 	case pickerNewAgent:
 		return m.applyNewAgentPick(target)
+	case pickerCloseAgent:
+		return m.applyClosePick(target)
 	}
 	return nil
 }
@@ -907,6 +913,24 @@ func newNewAgentPicker() *widgets.ListPicker {
 		"new agent — ↑/↓ move · enter select · esc cancel",
 		[]string{worktreeOption, currentDirOption},
 		worktreeOption,
+		pickerStyle(),
+	)
+}
+
+// newCloseAgentPicker builds the close confirmation. When the agent owns a
+// worktree it offers remove-vs-keep (defaulting to keep); otherwise a plain
+// confirm/cancel.
+func newCloseAgentPicker(worktree bool) *widgets.ListPicker {
+	items := []string{closeConfirmOption, closeCancelOption}
+	active := closeConfirmOption
+	if worktree {
+		items = []string{closeRemoveWorktreeOption, closeKeepWorktreeOption, closeCancelOption}
+		active = closeKeepWorktreeOption
+	}
+	return widgets.NewListPicker(
+		"close agent — ↑/↓ move · enter select · esc cancel",
+		items,
+		active,
 		pickerStyle(),
 	)
 }

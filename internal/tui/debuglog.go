@@ -108,6 +108,8 @@ func pickerKindName(k pickerKind) string {
 		return "resume"
 	case pickerNewAgent:
 		return "newagent"
+	case pickerCloseAgent:
+		return "closeagent"
 	default:
 		return "none"
 	}
