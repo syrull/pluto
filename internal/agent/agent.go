@@ -23,6 +23,17 @@ const (
 	contextBudgetFraction = 0.8
 )
 
+// learnOverlay is appended to the system prompt while learn mode is on, turning
+// the agent into a pair-programming tutor that teaches Go and the codebase as it
+// works. Asides are optional and skimmable so they never block or slow the task.
+const learnOverlay = "\n\n--- Learn mode (pair programming) ---\n" +
+	"The user is learning Go and this codebase. Teach as you work, but never block or slow the task waiting on them.\n" +
+	"- Before a non-trivial edit, add a one-line 'why': what you're changing and how it fits the code you just read (its callers, callees, and the package's role).\n" +
+	"- When you use a Go idiom a newcomer may not know (pointer vs value receivers, goroutines and channels, interface satisfaction, defer, error wrapping, struct embedding), add a one- or two-line aside explaining it in this concrete context.\n" +
+	"- Point at the exact file:line you're referring to so the user can read along.\n" +
+	"- Keep asides short and skimmable; the user can ignore them. No quizzes, no asking them to confirm understanding, no waiting for a reply.\n" +
+	"- Teaching augments the work; still complete the task."
+
 // Event is an observable step emitted during Run, for UIs to render progress.
 type Event struct {
 	// Kind is one of: "text", "text_delta", "thinking_delta", "tool_review",
@@ -97,6 +108,7 @@ type Agent struct {
 	lastUsage    llm.Usage // token accounting from the most recent turn
 	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
 	contextLimit int       // token budget for the re-sent transcript; 0 ⇒ derive from window
+	learnMode    bool      // when true, learnOverlay is appended to the system message
 
 	steerMu sync.Mutex     // guards steer
 	steer   []SteerMessage // user messages queued to fold into a running turn
@@ -121,6 +133,34 @@ func New(p llm.Provider, r *tool.Registry, systemPrompt string, opts ...Option) 
 	return a
 }
 
+// systemContentLocked returns the effective system message: the base prompt plus
+// the learn overlay when learn mode is on. The caller holds a.mu.
+func (a *Agent) systemContentLocked() string {
+	if a.learnMode {
+		return a.systemPrompt + learnOverlay
+	}
+	return a.systemPrompt
+}
+
+// SetLearnMode toggles the pair-programming teaching overlay and rewrites the
+// live system message so the change takes effect on the next turn without
+// discarding the conversation.
+func (a *Agent) SetLearnMode(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.learnMode = on
+	if len(a.transcript) > 0 && a.transcript[0].Role == llm.RoleSystem {
+		a.transcript[0].Content = a.systemContentLocked()
+	}
+}
+
+// LearnMode reports whether the teaching overlay is active.
+func (a *Agent) LearnMode() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.learnMode
+}
+
 // Reset discards the running transcript and starts a fresh conversation.
 func (a *Agent) Reset() {
 	a.TakeSteering()
@@ -129,7 +169,7 @@ func (a *Agent) Reset() {
 	a.transcript = nil
 	a.lastUsage = llm.Usage{}
 	if a.systemPrompt != "" {
-		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemPrompt})
+		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemContentLocked()})
 	}
 }
 
@@ -154,7 +194,7 @@ func (a *Agent) Load(msgs []llm.Message) {
 	defer a.mu.Unlock()
 	a.transcript = nil
 	if a.systemPrompt != "" {
-		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemPrompt})
+		a.transcript = append(a.transcript, llm.Message{Role: llm.RoleSystem, Content: a.systemContentLocked()})
 	}
 	for _, m := range msgs {
 		if m.Role == llm.RoleSystem {

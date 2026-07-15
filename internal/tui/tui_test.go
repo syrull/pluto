@@ -556,8 +556,63 @@ func TestModelStatusContextWindow(t *testing.T) {
 	m := &model{agent: agent.New(ap, tool.NewRegistry(), "")}
 
 	status := m.modelStatus()
-	if !strings.Contains(status, "context: 0% / 1M") {
+	if !strings.Contains(status, "C: 0% / 1M") {
 		t.Fatalf("modelStatus should show context 0%% / 1M before any turn, got:\n%s", status)
+	}
+}
+
+func TestShortModelName(t *testing.T) {
+	cases := map[string]string{
+		"anthropic/claude-opus-4-8":  "opus4-8",
+		"anthropic/claude-sonnet-5":  "sonnet5",
+		"anthropic/claude-haiku-4-5": "haiku4-5",
+		"stub-echo":                  "stub-echo",
+		"no provider":                "no provider",
+	}
+	for in, want := range cases {
+		if got := shortModelName(in); got != want {
+			t.Fatalf("shortModelName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestThinkStatusText(t *testing.T) {
+	cases := map[llm.ThinkLevel]string{
+		llm.ThinkNone:   "off",
+		llm.ThinkLow:    "++",
+		llm.ThinkMedium: "+++",
+		llm.ThinkHigh:   "++++",
+		llm.ThinkXHigh:  "+++++",
+		llm.ThinkMax:    "max",
+	}
+	for lvl, want := range cases {
+		if got := thinkStatusText(lvl); got != want {
+			t.Fatalf("thinkStatusText(%q) = %q, want %q", lvl, got, want)
+		}
+	}
+}
+
+func TestModelStatusShowsLearnChip(t *testing.T) {
+	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "base")
+	m := &model{agent: ag}
+
+	if strings.Contains(m.modelStatus(), "learn") {
+		t.Fatalf("status should omit the learn chip while off, got:\n%s", m.modelStatus())
+	}
+	ag.SetLearnMode(true)
+	if !strings.Contains(m.modelStatus(), "learn") {
+		t.Fatalf("status should show the learn chip while on, got:\n%s", m.modelStatus())
+	}
+}
+
+func TestModelStatusOmitsMouseWhenOff(t *testing.T) {
+	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), ""), mouse: false}
+	if strings.Contains(m.modelStatus(), "mouse") {
+		t.Fatalf("status should omit the mouse chip when off, got:\n%s", m.modelStatus())
+	}
+	m.mouse = true
+	if !strings.Contains(m.modelStatus(), "mouse: on") {
+		t.Fatalf("status should show mouse: on when enabled, got:\n%s", m.modelStatus())
 	}
 }
 
@@ -580,7 +635,7 @@ func TestFormatTokens(t *testing.T) {
 
 func TestModelStatusStubNoContext(t *testing.T) {
 	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), "")}
-	if status := m.modelStatus(); strings.Contains(status, "context:") {
+	if status := m.modelStatus(); strings.Contains(status, "C:") {
 		t.Fatalf("stub provider has no context window; status should omit it, got:\n%s", status)
 	}
 }
@@ -662,6 +717,37 @@ func TestShortCwdHomeAbbreviation(t *testing.T) {
 	}
 }
 
+func TestHandleCommandLearnToggle(t *testing.T) {
+	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), "base")}
+
+	// Explicit on.
+	status, cmd := m.handleCommand("/learn on")
+	if status != "" || cmd != nil {
+		t.Fatalf("/learn on should not push to transcript, got status %q cmd %v", status, cmd)
+	}
+	if !m.agent.LearnMode() {
+		t.Fatal("/learn on should enable learn mode")
+	}
+	if !strings.Contains(m.notice, "learn mode on") {
+		t.Fatalf("notice should reflect learn mode on, got: %s", m.notice)
+	}
+
+	// Bare /learn toggles back off.
+	_, _ = m.handleCommand("/learn")
+	if m.agent.LearnMode() {
+		t.Fatal("bare /learn should toggle learn mode off")
+	}
+	if !strings.Contains(m.notice, "learn mode off") {
+		t.Fatalf("notice should reflect learn mode off, got: %s", m.notice)
+	}
+
+	// Invalid argument rejects.
+	status, _ = m.handleCommand("/learn maybe")
+	if !strings.Contains(status, "usage:") {
+		t.Fatalf("invalid /learn should show usage, got: %s", status)
+	}
+}
+
 func TestHandleCommandThinkUnsupported(t *testing.T) {
 	m := &model{agent: agent.New(llm.Stub{}, tool.NewRegistry(), "")}
 	status, cmd := m.handleCommand("/think")
@@ -693,7 +779,7 @@ func TestHandleCommandThinkLevelsAnthropic(t *testing.T) {
 	// /think off disables.
 	_, _ = m.handleCommand("/think off")
 	status = m.modelStatus()
-	if !strings.Contains(status, "thinking: off") {
+	if !strings.Contains(status, "T:off") {
 		t.Fatalf("after /think off, modelStatus should show off, got: %s", status)
 	}
 

@@ -297,28 +297,26 @@ func (m model) modelStatus() string {
 		plain = append(plain, raw)
 	}
 
-	add(styleStatusModel.Render(name), name)
+	shortName := shortModelName(name)
+	add(styleStatusModel.Render(shortName), shortName)
 
 	if m.agent != nil {
 		if th, ok := m.agent.Thinker(); ok {
-			level := "off"
-			if lvl := th.ThinkLevel(); lvl.Thinking() {
-				level = string(lvl)
-			}
-			raw := "thinking: " + level
+			raw := "T:" + thinkStatusText(th.ThinkLevel())
 			add(styleStatusThink.Render(raw), raw)
 		}
 		if used, window, ok := m.agent.ContextUsage(); ok && window > 0 {
-			raw := fmt.Sprintf("context: %d%% / %s", used*100/window, formatTokens(window))
+			raw := fmt.Sprintf("C: %d%% / %s", used*100/window, formatTokens(window))
 			add(styleStatusCtx.Render(raw), raw)
+		}
+		if m.agent.LearnMode() {
+			add(styleStatusLearn.Render("learn"), "learn")
 		}
 	}
 
-	mouse := "mouse: off"
 	if m.mouse {
-		mouse = "mouse: on"
+		add(styleStatusMouse.Render("mouse: on"), "mouse: on")
 	}
-	add(styleStatusMouse.Render(mouse), mouse)
 
 	if chip := attachmentChip(m.attachments); chip != "" {
 		add(styleStatusAttach.Render(chip), chip)
@@ -349,6 +347,43 @@ func (m model) modelStatus() string {
 		line = styleWorking.Render(workingLabel) + sep + line
 	}
 	return line
+}
+
+// shortModelName compacts a provider name for the status line, e.g.
+// "anthropic/claude-opus-4-8" → "opus4-8". It strips the "anthropic/" and
+// "claude-" prefixes and joins the family to its version (dropping the first
+// hyphen). Names without the anthropic prefix are returned unchanged.
+func shortModelName(name string) string {
+	if !strings.HasPrefix(name, "anthropic/") {
+		return name
+	}
+	s := strings.TrimPrefix(name, "anthropic/")
+	s = strings.TrimPrefix(s, "claude-")
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		s = s[:i] + s[i+1:]
+	}
+	return s
+}
+
+// thinkStatusText renders the extended-thinking level compactly for the status
+// line: "off", "max", or a run of "+" that grows with effort (low ++ … xhigh +++++).
+func thinkStatusText(level llm.ThinkLevel) string {
+	switch level {
+	case llm.ThinkNone:
+		return "off"
+	case llm.ThinkLow:
+		return "++"
+	case llm.ThinkMedium:
+		return "+++"
+	case llm.ThinkHigh:
+		return "++++"
+	case llm.ThinkXHigh:
+		return "+++++"
+	case llm.ThinkMax:
+		return "max"
+	default:
+		return string(level)
+	}
 }
 
 // shortCwd returns the process working directory with the home prefix collapsed

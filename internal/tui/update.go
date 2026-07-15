@@ -311,6 +311,26 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			return styleErr.Render("✗ usage: /auto [on|off]"), nil
 		}
 
+	case "/learn":
+		if len(fields) > 1 {
+			switch fields[1] {
+			case "on":
+				m.agent.SetLearnMode(true)
+			case "off":
+				m.agent.SetLearnMode(false)
+			default:
+				return styleErr.Render("✗ usage: /learn [on|off]"), nil
+			}
+		} else {
+			m.agent.SetLearnMode(!m.agent.LearnMode())
+		}
+		if m.agent.LearnMode() {
+			m.notice = "✓ learn mode on — I'll explain Go and the codebase as we go"
+		} else {
+			m.notice = "✓ learn mode off"
+		}
+		return "", nil
+
 	case "/gh":
 		if !ghAvailable() {
 			return styleErr.Render("✗ gh unavailable — install the GitHub CLI and use a github.com remote"), nil
