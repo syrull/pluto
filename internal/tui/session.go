@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/session"
 )
@@ -127,6 +128,7 @@ func (m *model) resume(id string) tea.Cmd {
 	if active < 0 || active >= len(agents) {
 		active = 0
 	}
+	debug.Info(dbgTUI, "resume session", "id", sess.ID, "agents", len(agents), "active", active)
 
 	if m.newAgent == nil || len(agents) <= 1 {
 		a := agents[active]

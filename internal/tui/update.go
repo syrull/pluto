@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
@@ -81,6 +82,7 @@ func (m *model) applyEvent(ev agent.Event) tea.Cmd {
 // canceled turn doesn't immediately restart. The pending listener delivers
 // doneMsg once the run unwinds, which clears busy.
 func (m *model) interrupt() {
+	debug.Info(dbgTUI, "interrupt", "id", m.activeID())
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
@@ -125,6 +127,7 @@ func (m *model) restartSteering(pending []agent.SteerMessage) tea.Cmd {
 
 func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	fields := strings.Fields(line)
+	debug.Info(dbgTUI, "slash command", "cmd", fields[0], "args", len(fields)-1)
 	switch fields[0] {
 	case "/new":
 		// Clears only the active agent's conversation; other agents keep running.
@@ -336,8 +339,32 @@ func thinkNotice(level llm.ThinkLevel) string {
 	return "✓ extended thinking: " + string(level)
 }
 
-// Update handles Bubbletea messages and returns the updated model and commands.
+// Update logs each incoming message and the resulting state (when debug logging
+// is on) then delegates to update, so a session can be replayed frame by frame.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	lvl := msgLevel(msg)
+	if debug.Should(dbgTUI, lvl) {
+		typ, kv := msgSummary(msg)
+		debug.Event(dbgTUI, lvl, "update "+typ, kv...)
+	}
+	next, cmd := m.update(msg)
+	if debug.Should(dbgTUI, lvl) {
+		if nm, ok := next.(model); ok {
+			off := 0
+			if nm.ready {
+				off = nm.vp.YOffset()
+			}
+			debug.Event(dbgTUI, lvl, "state",
+				"focus", focusName(nm.focus), "busy", nm.busy, "home", nm.showHome,
+				"overlay", nm.overlayName(), "w", nm.width, "h", nm.height,
+				"scroll", off, "lines", len(nm.lines), "cmd", cmd != nil)
+		}
+	}
+	return next, cmd
+}
+
+// update handles Bubbletea messages and returns the updated model and commands.
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -377,6 +404,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncViewport()
 		m.resizeModal()
+		debug.Debug(dbgTUI, "layout", "w", msg.Width, "h", msg.Height,
+			"conv_w", cw, "conv_h", ch, "sidebar_w", m.sidebarWidth(), "input_w", inW)
 		return m, nil
 
 	case tea.KeyPressMsg:

@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/tools"
 	"github.com/syrull/pluto/internal/workdir"
 )
@@ -35,6 +36,7 @@ func (m *model) handleInline(in string) tea.Cmd {
 		m.notice = "✗ a command is already running — esc to cancel it"
 		return nil
 	}
+	debug.Info(dbgTUI, "inline shell command", "cmd", oneLine(command), "cwd", m.activeCwd())
 	m.input.Reset()
 	m.pushText(m.renderBashLine(command))
 	return m.runInline(command)

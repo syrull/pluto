@@ -7,6 +7,8 @@ package guard
 import (
 	"regexp"
 	"strings"
+
+	"github.com/syrull/pluto/internal/debug"
 )
 
 // Violation describes a matched catastrophic pattern.
@@ -25,10 +27,12 @@ func Check(command string) (Violation, bool) {
 		return Violation{}, false
 	}
 	if v, ok := checkWhole(norm); ok {
+		debug.Warn("guard", "catastrophic pattern matched", "rule", v.Rule)
 		return v, true
 	}
 	for _, seg := range segments(norm) {
 		if v, ok := checkSegment(seg); ok {
+			debug.Warn("guard", "catastrophic pattern matched", "rule", v.Rule)
 			return v, true
 		}
 	}

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/syrull/pluto/internal/debug"
 )
 
 // Anthropic OAuth (Claude Pro/Max) constants. These mirror the Claude Code CLI
@@ -74,6 +76,7 @@ func AuthorizeURL() (string, *Flow, error) {
 		"code_challenge_method": {"S256"},
 		"state":                 {p.verifier},
 	}
+	debug.Info("auth", "login flow started", "redirect_uri", oauthRedirectURI)
 	return oauthAuthorizeURL + "?" + q.Encode(), &Flow{pkce: p}, nil
 }
 
@@ -96,11 +99,14 @@ type callbackResult struct {
 // If the browser is on another machine, the caller can instead collect the
 // redirect URL / code manually and call Complete.
 func (f *Flow) WaitForCallback(ctx context.Context) (OAuthToken, error) {
+	debug.Info("auth", "waiting for oauth callback", "path", "callback")
 	res, err := f.listenForCode(ctx)
 	if err != nil {
+		debug.Warn("auth", "callback failed", "err", err)
 		return OAuthToken{}, err
 	}
 	if res.state != "" && res.state != f.pkce.verifier {
+		debug.Warn("auth", "oauth state mismatch", "path", "callback")
 		return OAuthToken{}, fmt.Errorf("auth: oauth state mismatch")
 	}
 	return f.Complete(ctx, res.code)
@@ -164,18 +170,23 @@ func (f *Flow) listenForCode(ctx context.Context) (callbackResult, error) {
 func (f *Flow) Complete(ctx context.Context, input string) (OAuthToken, error) {
 	code, state := parseAuthorizationInput(input)
 	if state != "" && state != f.pkce.verifier {
+		debug.Warn("auth", "oauth state mismatch", "path", "paste")
 		return OAuthToken{}, fmt.Errorf("auth: oauth state mismatch")
 	}
 	if code == "" {
+		debug.Warn("auth", "missing authorization code", "path", "paste")
 		return OAuthToken{}, fmt.Errorf("auth: missing authorization code")
 	}
 	tok, err := exchangeCode(ctx, code, f.pkce.verifier)
 	if err != nil {
+		debug.Warn("auth", "code exchange failed", "err", err)
 		return OAuthToken{}, err
 	}
 	if err := save(tok); err != nil {
 		return OAuthToken{}, err
 	}
+	debug.Info("auth", "login success", "token", debug.Redact(tok.AccessToken),
+		"refresh", debug.Redact(tok.RefreshToken), "scopes", strings.Join(tok.Scopes, " "), "expires_at", tok.ExpiresAt)
 	return tok, nil
 }
 
@@ -246,6 +257,7 @@ func Refresh(ctx context.Context, refreshToken string) (OAuthToken, error) {
 	if refreshToken == "" {
 		return OAuthToken{}, fmt.Errorf("auth: no refresh token")
 	}
+	debug.Info("auth", "refreshing token", "refresh", debug.Redact(refreshToken))
 	body := map[string]any{
 		"grant_type":    "refresh_token",
 		"client_id":     oauthClientID,
@@ -253,11 +265,13 @@ func Refresh(ctx context.Context, refreshToken string) (OAuthToken, error) {
 	}
 	tok, err := postToken(ctx, body)
 	if err != nil {
+		debug.Warn("auth", "refresh failed", "err", err)
 		return OAuthToken{}, err
 	}
 	if err := save(tok); err != nil {
 		return OAuthToken{}, err
 	}
+	debug.Info("auth", "token refreshed", "token", debug.Redact(tok.AccessToken), "expires_at", tok.ExpiresAt)
 	return tok, nil
 }
 

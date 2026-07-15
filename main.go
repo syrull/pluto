@@ -5,8 +5,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/auth"
@@ -99,6 +102,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "pluto: debug logging to", path)
 	}
 	defer debug.Close()
+	defer debug.LogPanic()
+	logInvocation()
 
 	reg := tool.NewRegistry()
 	reg.MustRegister(tools.Read{})
@@ -110,6 +115,7 @@ func main() {
 	provider := selectProvider()
 	gate := buildGate()
 	systemPrompt := buildSystemPrompt(reg)
+	logConfig(provider, gate)
 
 	// newAgent builds a fresh agent for each workspace: same provider, tools, gate,
 	// and system prompt, but an independent transcript so agents run in parallel.
@@ -120,10 +126,71 @@ func main() {
 		)
 	}
 	ag := newAgent()
+	debug.Info("lifecycle", "starting TUI")
 	if _, err := tui.New(ag, newAgent, buildSummarizer(), buildLoginHook(ag)).Run(); err != nil {
+		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
 	}
+	debug.Info("lifecycle", "clean shutdown")
+}
+
+// logInvocation records how pluto was started: where, with what, and in what
+// environment, so a session log leads with the full context needed to reproduce it.
+func logInvocation() {
+	if !debug.Enabled() {
+		return
+	}
+	cwd, _ := os.Getwd()
+	debug.Info("lifecycle", "invoked pluto from directory "+cwd,
+		"cwd", cwd,
+		"argv", strings.Join(os.Args, " "),
+		"version", version,
+		"go", runtime.Version(),
+		"os", runtime.GOOS,
+		"arch", runtime.GOARCH,
+		"term", os.Getenv("TERM"),
+		"colorterm", os.Getenv("COLORTERM"),
+	)
+	if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		debug.Info("lifecycle", "terminal size", "cols", w, "rows", h)
+	}
+}
+
+// logConfig records the effective, env-derived configuration with secrets
+// redacted, so the log states exactly which model/judge/auto settings were in play.
+func logConfig(provider llm.Provider, gate agent.Gate) {
+	if !debug.Enabled() {
+		return
+	}
+	auto := "off"
+	judgeName := ""
+	if gate != nil {
+		auto = "on"
+		if c, ok := gate.(agent.AutoController); ok {
+			judgeName = c.JudgeName()
+		}
+	}
+	debug.Info("lifecycle", "effective config",
+		"provider", provider.Name(),
+		"model", defaultModel(),
+		"judge_model", judgeModel(),
+		"context_limit", contextLimit(),
+		"auto", auto,
+		"judge", judgeName,
+		"repo_scan", os.Getenv("PLUTO_REPO_SCAN"),
+		"mouse", os.Getenv("PLUTO_MOUSE"),
+		"anthropic_api_key", redactedEnv("ANTHROPIC_API_KEY"),
+		"anthropic_oauth_token", redactedEnv("ANTHROPIC_OAUTH_TOKEN"),
+	)
+}
+
+// redactedEnv reports the presence of a secret env var without revealing it.
+func redactedEnv(key string) string {
+	if v := os.Getenv(key); v != "" {
+		return debug.Redact(v)
+	}
+	return "<unset>"
 }
 
 // buildSummarizer returns a cheap one-shot summarizer (used to auto-label agents)

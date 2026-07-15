@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
@@ -50,6 +51,7 @@ func newFileTree(dir string) *widgets.Tree {
 		return nil
 	}
 	root := &widgets.TreeNode{Name: filepath.Base(dir), Path: dir, IsDir: true}
+	debug.Info(dbgTUI, "file tree rooted", "dir", dir)
 	return widgets.NewTree(root, loadDir, treeStyle())
 }
 
@@ -58,6 +60,7 @@ func newFileTree(dir string) *widgets.Tree {
 func loadDir(path string) []*widgets.TreeNode {
 	entries, err := os.ReadDir(path)
 	if err != nil {
+		debug.Warn(dbgTUI, "loadDir failed", "dir", path, "err", err)
 		return nil
 	}
 	nodes := make([]*widgets.TreeNode, 0, len(entries))
@@ -73,9 +76,13 @@ func loadDir(path string) []*widgets.TreeNode {
 		}
 		return strings.ToLower(nodes[i].Name) < strings.ToLower(nodes[j].Name)
 	})
+	capped := false
 	if len(nodes) > maxTreeEntries {
 		nodes = nodes[:maxTreeEntries]
+		capped = true
 	}
+	debug.Debug(dbgTUI, fmt.Sprintf("showing %d files in %s", len(nodes), path),
+		"dir", path, "files", len(nodes), "capped", capped)
 	return nodes
 }
 
@@ -184,6 +191,13 @@ func (m model) buildChangesList() *widgets.Tree {
 	for i, c := range changes {
 		items[i] = &widgets.TreeNode{Name: c.rel, Path: c.abs}
 	}
+	if debug.Should(dbgTUI, debug.LevelDebug) {
+		names := make([]string, len(changes))
+		for i, c := range changes {
+			names[i] = c.rel + ":" + strings.TrimSpace(m.git.status[c.abs])
+		}
+		debug.Debug(dbgTUI, "changes pane built", "files", len(changes), "entries", strings.Join(names, ","))
+	}
 	t := widgets.NewList(items, treeStyle())
 	t.SetStatus(m.buildStatusStyles())
 	return t
@@ -255,7 +269,9 @@ func (m *model) cycleFocus(back bool) {
 	} else {
 		idx = (idx + 1) % len(order)
 	}
+	from := m.focus
 	m.focus = order[idx]
+	debug.Debug(dbgTUI, "focus change", "from", focusName(from), "to", focusName(m.focus), "back", back)
 }
 
 // paneKey handles pane switching and, when a sidebar pane holds focus, its
@@ -378,6 +394,7 @@ func (m *model) openFinder() {
 	if len(files) == 0 {
 		return
 	}
+	debug.Info(dbgTUI, "fuzzy finder opened", "base", base, "files", len(files))
 	m.finderBase = base
 	m.finder = widgets.NewFuzzyPicker(
 		"find file — type to filter · ↑/↓ move · ↵ open · esc cancel",
@@ -396,6 +413,7 @@ func (m *model) openFinderFile(rel string) {
 // openFileDiff shows a file's working-tree diff in a modal, falling back to its
 // (syntax-highlighted) contents when there is no diff.
 func (m *model) openFileDiff(path string) {
+	debug.Info(dbgTUI, "open file diff", "path", path)
 	title, body, isDiff := fileDiff(path, m.git.root, m.activeCwd())
 	m.modal = widgets.NewModal(title, body, modalStyle())
 	if isDiff {

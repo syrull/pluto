@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/llm"
 )
 
@@ -71,13 +72,21 @@ func (j *LLM) Assess(ctx context.Context, req Request) (Verdict, error) {
 		{Role: llm.RoleSystem, Content: systemPrompt},
 		{Role: llm.RoleUser, Content: buildPrompt(req)},
 	}
+	debug.Debug("judge", "assess", "command", oneLine(req.Command), "cwd", req.Cwd)
 	var lastErr error
 	for attempt := 1; attempt <= j.attempts; attempt++ {
 		resp, err := j.generate(ctx, transcript)
 		if err == nil {
-			return parseVerdict(resp.Text)
+			v, perr := parseVerdict(resp.Text)
+			if perr != nil {
+				debug.Warn("judge", "verdict parse failed", "attempt", attempt, "err", perr)
+				return Verdict{}, perr
+			}
+			debug.Info("judge", "verdict", "decision", string(v.Decision), "risk", v.Risk, "reason", v.Reason, "attempt", attempt)
+			return v, nil
 		}
 		lastErr = err
+		debug.Debug("judge", "attempt failed", "attempt", attempt, "transient", transient(err), "err", err)
 		// Retry only a transient gap, while the caller still waits and attempts remain.
 		if !transient(err) || ctx.Err() != nil || attempt == j.attempts {
 			break
@@ -87,6 +96,7 @@ func (j *LLM) Assess(ctx context.Context, req Request) (Verdict, error) {
 			break
 		}
 	}
+	debug.Warn("judge", "assess failed", "err", lastErr)
 	return Verdict{}, lastErr
 }
 

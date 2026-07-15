@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
@@ -97,8 +98,10 @@ func gitRunDir(dir string, args ...string) (string, error) {
 
 // gatherGitIn collects git state for dir (empty ⇒ process cwd).
 func gatherGitIn(dir string) gitInfo {
+	timer := debug.NewTimer(dbgTUI, "git gather done")
 	var g gitInfo
 	if out, err := gitRunDir(dir, "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(out) != "true" {
+		timer.Stop("dir", dir, "repo", false)
 		return g
 	}
 	g.isRepo = true
@@ -124,6 +127,8 @@ func gatherGitIn(dir string) gitInfo {
 	if out, err := gitRunDir(dir, "log", "-1", "--format=%h %s (%cr)"); err == nil {
 		g.lastCommit = strings.TrimSpace(out)
 	}
+	timer.Stop("dir", dir, "repo", true, "branch", g.branch,
+		"staged", g.staged, "unstaged", g.unstaged, "untracked", g.untracked, "tracked_changes", len(g.status))
 	return g
 }
 
