@@ -4,6 +4,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/syrull/pluto/internal/debug"
@@ -92,6 +94,14 @@ func WithContextLimit(tokens int) Option {
 	}
 }
 
+// WithSummarizer installs a one-shot summarizer used to compact the oldest
+// exchanges into a single "memory" turn when the transcript exceeds the context
+// budget, instead of dropping them outright. A nil summarizer leaves compaction
+// off and the agent falls back to boundary-safe eviction.
+func WithSummarizer(fn func(context.Context, string) (string, error)) Option {
+	return func(a *Agent) { a.summarize = fn }
+}
+
 // Agent owns a provider, a tool registry, and the running transcript.
 type Agent struct {
 	provider     llm.Provider
@@ -109,6 +119,8 @@ type Agent struct {
 	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
 	contextLimit int       // token budget for the re-sent transcript; 0 ⇒ derive from window
 	learnMode    bool      // when true, learnOverlay is appended to the system message
+	// summarize compacts evicted exchanges into a memory turn; nil ⇒ plain eviction.
+	summarize func(context.Context, string) (string, error)
 
 	steerMu sync.Mutex     // guards steer
 	steer   []SteerMessage // user messages queued to fold into a running turn
@@ -318,7 +330,7 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 	debug.Info("agent", "run start", "input", truncate(input, 256), "attachments", len(attachments), "provider", a.provider.Name())
 	runTimer := debug.NewTimer("agent", "run done")
 	a.appendMessages(llm.Message{Role: llm.RoleUser, Content: input, Attachments: attachments})
-	a.trimTranscript()
+	a.compactTranscript(ctx)
 
 	for step := range maxSteps {
 		debug.Debug("agent", "step", "n", step+1, "max", maxSteps)
@@ -495,7 +507,8 @@ func (a *Agent) trimTranscript() {
 // token size exceeds the context budget. It cuts only at human-input boundaries so
 // tool_use/tool_result pairs and each assistant turn's leading thinking block stay
 // intact, always keeps the leading system message, and never trims the in-progress
-// exchange (the most recent user turn onward). The caller holds a.mu.
+// exchange (the most recent user turn onward). It is also the fallback for
+// compactTranscript when no summarizer is available. The caller holds a.mu.
 func (a *Agent) trimTranscriptLocked() {
 	budget := a.contextBudget()
 	if budget <= 0 || estimateTokens(a.transcript) <= budget {
@@ -531,6 +544,171 @@ func (a *Agent) trimTranscriptLocked() {
 	trimmed = append(trimmed, a.transcript[keepFrom:]...)
 	debug.Debug("agent", "trimmed transcript", "from", len(a.transcript), "to", len(trimmed), "budget_tok", budget)
 	a.transcript = trimmed
+}
+
+// memoryPrefix marks a compacted "memory" turn so the model reads it as a summary
+// of earlier conversation rather than a fresh user request.
+const memoryPrefix = "[Memory — a summary of earlier conversation, compacted to save context]\n"
+
+const (
+	// maxCompactionInputChars bounds the excerpt sent to the summarizer so
+	// compaction stays cheap no matter how much history is being evicted.
+	maxCompactionInputChars = 12_000
+	// maxSummaryChars caps the memory turn so it stays small and re-compactable.
+	maxSummaryChars = 4_000
+)
+
+// compactionPlan is the boundary-safe split computed under the lock and applied
+// after summarizing off-lock: head (the system message) and the retained tail are
+// kept verbatim, while evicted is condensed into a single memory turn.
+type compactionPlan struct {
+	head    []llm.Message
+	evicted []llm.Message
+	tail    []llm.Message
+	budget  int
+}
+
+// compactTranscript keeps the transcript within the context budget by summarizing
+// the oldest evictable exchanges into a single memory turn kept in their place,
+// preserving early decisions and constraints instead of dropping them. When no
+// summarizer is wired, the context is fine, or summarization fails, it falls back
+// to boundary-safe eviction (trimTranscriptLocked). The summarizer call runs
+// without a.mu held (a single agent runs one turn at a time, so no other writer
+// mutates the transcript during the call).
+func (a *Agent) compactTranscript(ctx context.Context) {
+	if a.summarize == nil || ctx.Err() != nil {
+		a.trimTranscript()
+		return
+	}
+
+	a.mu.Lock()
+	plan, ok := a.compactionPlanLocked()
+	a.mu.Unlock()
+	if !ok {
+		return // within budget, or nothing safe to evict
+	}
+
+	debug.Info("agent", "compaction start", "evict_msgs", len(plan.evicted), "budget_tok", plan.budget)
+	timer := debug.NewTimer("agent", "compaction summarize")
+	summary, err := a.summarize(ctx, compactionPrompt(plan.evicted))
+	timer.Stop("chars", len(summary), "err", errText(err))
+
+	summary = truncate(strings.TrimSpace(summary), maxSummaryChars)
+	if err != nil || summary == "" {
+		debug.Warn("agent", "compaction fell back to eviction", "err", errText(err), "empty", summary == "")
+		a.trimTranscript()
+		return
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	before := len(a.transcript)
+	rebuilt := make([]llm.Message, 0, len(plan.head)+1+len(plan.tail))
+	rebuilt = append(rebuilt, plan.head...)
+	rebuilt = append(rebuilt, llm.Message{Role: llm.RoleUser, Content: memoryPrefix + summary})
+	rebuilt = append(rebuilt, plan.tail...)
+	a.transcript = rebuilt
+	debug.Info("agent", "compacted transcript", "from", before, "to", len(a.transcript),
+		"evicted", len(plan.evicted), "summary_chars", len(summary), "budget_tok", plan.budget)
+}
+
+// compactionPlanLocked mirrors trimTranscriptLocked's boundary math to decide
+// which oldest exchanges to evict. It returns ok=false when the transcript is
+// within budget or only the in-progress exchange remains (nothing safe to evict).
+// The retained tail already fits the budget by construction, so a prior memory
+// turn falls into evicted and is re-summarized on a very long session. The caller
+// holds a.mu.
+func (a *Agent) compactionPlanLocked() (compactionPlan, bool) {
+	budget := a.contextBudget()
+	if budget <= 0 || estimateTokens(a.transcript) <= budget {
+		return compactionPlan{}, false
+	}
+
+	var boundaries []int // indices where a human turn begins
+	for i, m := range a.transcript {
+		if m.Role == llm.RoleUser {
+			boundaries = append(boundaries, i)
+		}
+	}
+	if len(boundaries) <= 1 {
+		return compactionPlan{}, false // only the current exchange remains
+	}
+
+	headEnd := 0
+	if a.transcript[0].Role == llm.RoleSystem {
+		headEnd = 1
+	}
+	headTokens := estimateTokens(a.transcript[:headEnd])
+
+	keepFrom := boundaries[len(boundaries)-1] // always keep the current exchange
+	for i := len(boundaries) - 2; i >= 0; i-- {
+		if headTokens+estimateTokens(a.transcript[boundaries[i]:]) > budget {
+			break
+		}
+		keepFrom = boundaries[i]
+	}
+	if keepFrom <= headEnd {
+		return compactionPlan{}, false // nothing ahead of the retained tail to evict
+	}
+
+	return compactionPlan{
+		head:    slices.Clone(a.transcript[:headEnd]),
+		evicted: slices.Clone(a.transcript[headEnd:keepFrom]),
+		tail:    slices.Clone(a.transcript[keepFrom:]),
+		budget:  budget,
+	}, true
+}
+
+// compactionPrompt builds the one-shot summarization request for the evicted
+// exchanges, asking for a terse, factual memory a coding agent can continue from.
+func compactionPrompt(evicted []llm.Message) string {
+	var b strings.Builder
+	b.WriteString("You are compacting the earlier part of a long coding-agent conversation to preserve its ")
+	b.WriteString("essential memory in far fewer tokens. Summarize the exchange below into a compact note that ")
+	b.WriteString("lets the agent continue without re-reading the originals. Capture the user's goals and ")
+	b.WriteString("constraints, decisions made and why, files and code changed, key discoveries, and any open ")
+	b.WriteString("threads or next steps. Prefer terse bullet points, do not invent details, and omit greetings ")
+	b.WriteString("and chatter.\n\n--- conversation to summarize ---")
+	b.WriteString(renderEvicted(evicted))
+	return b.String()
+}
+
+// renderEvicted renders the evicted messages as a compact, role-tagged transcript,
+// truncating each part and the whole so the summarizer input stays bounded.
+func renderEvicted(msgs []llm.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		if b.Len() >= maxCompactionInputChars {
+			b.WriteString("\n…(earlier content truncated)")
+			break
+		}
+		switch m.Role {
+		case llm.RoleUser:
+			b.WriteString("\nUSER: ")
+			b.WriteString(truncate(m.Content, 1000))
+		case llm.RoleModel:
+			if m.Thinking != "" {
+				b.WriteString("\nASSISTANT (thinking): ")
+				b.WriteString(truncate(m.Thinking, 500))
+			}
+			if m.Content != "" {
+				b.WriteString("\nASSISTANT: ")
+				b.WriteString(truncate(m.Content, 1000))
+			}
+			for _, c := range m.ToolCalls {
+				b.WriteString("\nASSISTANT called ")
+				b.WriteString(c.Name)
+				b.WriteString(": ")
+				b.WriteString(truncate(string(c.Args), 300))
+			}
+		case llm.RoleTool:
+			b.WriteString("\nTOOL ")
+			b.WriteString(m.ToolName)
+			b.WriteString(" result: ")
+			b.WriteString(truncate(m.Content, 500))
+		}
+	}
+	return b.String()
 }
 
 // imageTokenEstimate is a nominal per-image token cost for the trim heuristic.
