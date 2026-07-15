@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
@@ -73,6 +74,7 @@ func (m *model) showAffordance() string {
 }
 
 func (m *model) openModal(o toolOutput) {
+	debug.Info(dbgTUI, "open tool modal", "title", o.title, "path", o.path, "chars", len(o.full))
 	m.modal = widgets.NewModal(o.title, o.full, modalStyle())
 	if o.path != "" {
 		m.modal.Highlight(func(s string) string { return highlightSource(s, o.path) })

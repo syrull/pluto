@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/syrull/pluto/internal/debug"
 )
 
 const (
@@ -32,11 +34,15 @@ type release struct {
 // newer than current. current is the build version ("dev" for local builds).
 func Run(current string) error {
 	ctx := context.Background()
+	debug.Info("update", "version check", "current", current)
 	rel, err := latest(ctx)
 	if err != nil {
+		debug.Warn("update", "version check failed", "err", err)
 		return err
 	}
+	debug.Info("update", "latest release", "tag", rel.TagName)
 	if !newer(current, rel.TagName) {
+		debug.Info("update", "already up to date", "current", current)
 		fmt.Printf("pluto is up to date (%s)\n", current)
 		return nil
 	}
@@ -49,12 +55,19 @@ func Run(current string) error {
 		}
 	}
 	if url == "" {
+		debug.Warn("update", "no matching asset", "tag", rel.TagName, "asset", name)
 		return fmt.Errorf("release %s has no asset %q", rel.TagName, name)
 	}
 	fmt.Printf("updating pluto %s → %s\n", current, rel.TagName)
+	debug.Info("update", "downloading and replacing", "from", current, "to", rel.TagName, "asset", name)
+	timer := debug.NewTimer("update", "replace done")
 	if err := replace(ctx, url); err != nil {
+		timer.Stop("outcome", "error", "err", err)
+		debug.Error("update", "replace failed", "err", err)
 		return err
 	}
+	timer.Stop("outcome", "ok", "tag", rel.TagName)
+	debug.Info("update", "updated", "tag", rel.TagName)
 	fmt.Printf("updated to %s\n", rel.TagName)
 	return nil
 }

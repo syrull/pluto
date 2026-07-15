@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -171,9 +172,14 @@ func (m *model) renderThinkBox(think string) string {
 	return styleThinkBox.Width(m.contentWidth()).Render(hdr + "\n" + body)
 }
 
-// View renders the transcript layout with the status line and input footer.
+// View renders the transcript layout with the status line and input footer. Frame
+// renders are logged at TRACE and coalesced (see logFrame) so the high-volume
+// render loop doesn't drown the log by default.
 func (m model) View() tea.View {
-	v := tea.NewView(m.content())
+	start := time.Now()
+	body := m.content()
+	m.logFrame(body, time.Since(start))
+	v := tea.NewView(body)
 	v.AltScreen = true
 	if m.mouse {
 		v.MouseMode = tea.MouseModeCellMotion

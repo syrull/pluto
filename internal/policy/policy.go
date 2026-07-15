@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/guard"
 	"github.com/syrull/pluto/internal/judge"
 	"github.com/syrull/pluto/internal/llm"
@@ -77,12 +78,15 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 		return agent.ReviewResult{Allowed: true, Source: "fast-path"}
 	}
 	if cfg.FastPath && isSafeRead(cmd) {
+		debug.Debug("policy", "fast-path allow", "cmd", truncate(cmd, 200))
 		return agent.ReviewResult{Allowed: true, Source: "fast-path", Risk: "none"}
 	}
 	if v, ok := guard.Check(cmd); ok {
+		debug.Warn("policy", "guard block", "rule", v.Rule, "cmd", truncate(cmd, 200))
 		return agent.ReviewResult{Allowed: false, Source: "guard", Risk: "critical", Reason: v.Reason}
 	}
 	if j == nil {
+		debug.Debug("policy", "guard-only allow", "cmd", truncate(cmd, 200))
 		return agent.ReviewResult{Allowed: true, Source: "guard-only"}
 	}
 
@@ -93,6 +97,8 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 	if dir == "" {
 		dir = cwd()
 	}
+	debug.Debug("policy", "judge review", "cmd", truncate(cmd, 200), "cwd", dir)
+	timer := debug.NewTimer("policy", "judge verdict")
 	verdict, err := j.Assess(ctx, judge.Request{Command: cmd, Intent: intent, Why: why, Cwd: dir})
 	if err != nil {
 		allowed := cfg.OnJudgeError == judge.DecisionAllow
@@ -100,14 +106,25 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 		if !allowed {
 			reason = "judge unavailable — blocked by fail-safe policy"
 		}
+		timer.Stop("outcome", "error", "allowed", allowed, "err", err)
 		return agent.ReviewResult{Allowed: allowed, Source: "judge-error", Reason: reason}
 	}
+	timer.Stop("decision", string(verdict.Decision), "risk", verdict.Risk)
 	return agent.ReviewResult{
 		Allowed: verdict.Decision != judge.DecisionBlock,
 		Source:  "judge",
 		Risk:    verdict.Risk,
 		Reason:  verdict.Reason,
 	}
+}
+
+// truncate bounds a command string for a log field.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // AutoEnabled implements agent.AutoController.
@@ -126,6 +143,7 @@ func (g *ReviewGate) SetAutoEnabled(on bool) {
 	} else {
 		g.cfg.Mode = ModeOff
 	}
+	debug.Info("policy", "auto mode changed", "enabled", on)
 }
 
 // JudgeName implements agent.AutoController.

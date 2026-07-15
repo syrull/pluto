@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/glamour"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
@@ -92,6 +93,7 @@ type ghModal struct {
 }
 
 func newGHModal() *ghModal {
+	debug.Info(dbgTUI, "github browser opened")
 	g := &ghModal{loading: true, vp: viewport.New(), checks: map[int]*ghChecks{}}
 	g.vp.KeyMap = ghDetailKeyMap()
 	g.vp.FillHeight = true // pad short bodies so the modal stays full-page

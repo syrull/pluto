@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/syrull/pluto/internal/debug"
 )
 
 const (
@@ -47,18 +49,23 @@ func Overview() string {
 // skipped rather than failing the whole scan. It returns "" only when root
 // itself can't be listed.
 func Scan(root string) string {
+	debug.Info("reposcan", "scanning directory "+root, "path", root)
+	timer := debug.NewTimer("reposcan", "scan done")
 	entries, err := os.ReadDir(root)
 	if err != nil {
+		debug.Warn("reposcan", "unreadable directory", "path", root, "err", err)
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString(header)
 	fmt.Fprintf(&b, "\nWorking directory: %s", root)
-	if t := projectTypes(root); t != "" {
-		fmt.Fprintf(&b, "\nProject type: %s", t)
+	types := projectTypes(root)
+	if types != "" {
+		fmt.Fprintf(&b, "\nProject type: %s", types)
 	}
-	if g := gitSummary(root); g != "" {
-		fmt.Fprintf(&b, "\nGit: %s", g)
+	git := gitSummary(root)
+	if git != "" {
+		fmt.Fprintf(&b, "\nGit: %s", git)
 	}
 	if l := listing(entries); l != "" {
 		fmt.Fprintf(&b, "\nTop level:\n%s", l)
@@ -66,6 +73,7 @@ func Scan(root string) string {
 	if r := readmeHead(root, entries); r != "" {
 		fmt.Fprintf(&b, "\nREADME (first lines):\n%s", r)
 	}
+	timer.Stop("entries", len(entries), "types", types, "git", git)
 	return bound(b.String())
 }
 

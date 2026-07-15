@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/session"
 )
 
@@ -140,6 +141,7 @@ func (m *model) switchTo(i int) tea.Cmd {
 	if i < 0 || i >= len(m.workspaces) || i == m.active {
 		return nil
 	}
+	debug.Info(dbgTUI, "switch agent", "from", m.active, "to", i, "cwd", m.workspaces[i].cwd)
 	m.stash(m.active)
 	m.active = i
 	m.unstash(i)
@@ -173,6 +175,7 @@ func (m *model) spawn(cwd string, worktree bool) tea.Cmd {
 		m.notice = "✗ cannot create agents in this build"
 		return nil
 	}
+	debug.Info(dbgTUI, "spawn agent", "id", m.nextID, "cwd", cwd, "worktree", worktree)
 	m.stash(m.active)
 	id := m.nextID
 	m.nextID++
@@ -261,6 +264,7 @@ func (m *model) applyGitInfo(msg gitInfoMsg) {
 			if w.cwd == msg.dir {
 				w.git = msg.info
 				w.gitReady = true
+				debug.Debug(dbgTUI, "git info (background)", "dir", msg.dir, "changes", len(msg.info.status))
 			}
 		}
 		return
@@ -271,8 +275,12 @@ func (m *model) applyGitInfo(msg gitInfoMsg) {
 		m.tree.SetStatus(m.buildStatusStyles())
 	}
 	m.changes = m.buildChangesList()
+	debug.Info(dbgTUI, "changes pane refreshed", "dir", msg.dir, "repo", msg.info.isRepo,
+		"changed", len(msg.info.status), "present", m.changes != nil,
+		"staged", msg.info.staged, "unstaged", msg.info.unstaged, "untracked", msg.info.untracked)
 	if m.changes == nil && m.focus == paneChanges {
 		m.focus = paneTree
+		debug.Debug(dbgTUI, "focus fell back to files (changes gone)")
 	}
 }
 
