@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -226,14 +227,17 @@ func (m *model) applyNewAgentPick(target string) tea.Cmd {
 }
 
 // createWorktree adds a git worktree on a fresh branch at a sibling of the repo
-// root and returns its path.
+// root and returns its path. A short time-based suffix keeps the branch/path
+// unique so a leftover branch from a prior session (agent ids reset on restart)
+// doesn't collide.
 func (m *model) createWorktree(id int) (string, error) {
 	root := m.git.root
 	if root == "" {
 		return "", fmt.Errorf("not a git repository")
 	}
-	branch := fmt.Sprintf("pluto-agent-%d", id)
-	path := filepath.Join(filepath.Dir(root), fmt.Sprintf("%s-agent-%d", filepath.Base(root), id))
+	suffix := strconv.FormatInt(time.Now().Unix(), 36)
+	branch := fmt.Sprintf("pluto-agent-%d-%s", id, suffix)
+	path := filepath.Join(filepath.Dir(root), fmt.Sprintf("%s-agent-%d-%s", filepath.Base(root), id, suffix))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-b", branch, path).CombinedOutput()
@@ -245,6 +249,32 @@ func (m *model) createWorktree(id int) (string, error) {
 
 // gatherGit refreshes git state for the active agent's directory.
 func (m *model) gatherGit() tea.Cmd { return gatherGitCmdIn(m.activeCwd()) }
+
+// applyGitInfo stores a gathered git snapshot. A tagged gather whose directory
+// isn't the active agent's cwd (a background agent's, or a stale result from a
+// since-switched agent) updates only that workspace's own git state, so it never
+// clobbers the foreground Files/Changes view. Otherwise it updates the active
+// view and rebuilds the sidebar.
+func (m *model) applyGitInfo(msg gitInfoMsg) {
+	if msg.dir != "" && len(m.workspaces) > 0 && msg.dir != m.activeCwd() {
+		for _, w := range m.workspaces {
+			if w.cwd == msg.dir {
+				w.git = msg.info
+				w.gitReady = true
+			}
+		}
+		return
+	}
+	m.git = msg.info
+	m.gitReady = true
+	if m.tree != nil {
+		m.tree.SetStatus(m.buildStatusStyles())
+	}
+	m.changes = m.buildChangesList()
+	if m.changes == nil && m.focus == paneChanges {
+		m.focus = paneTree
+	}
+}
 
 // workspaceLabel returns the display label for workspace i: its auto-label, or
 // "Agent N" until one is assigned.

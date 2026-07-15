@@ -4,12 +4,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tool"
 )
 
@@ -155,6 +157,87 @@ func TestFocusOrderReachesAgents(t *testing.T) {
 	}
 	if order[len(order)-1] != paneAgents {
 		t.Fatalf("tab order should reach the Agents pane, got %v", order)
+	}
+}
+
+func TestBackgroundGitInfoDoesNotClobberActive(t *testing.T) {
+	m := multiModel(2)
+	m.workspaces[0].cwd = "/repoA"
+	m.workspaces[1].cwd = "/repoB"
+
+	bg := gitInfo{isRepo: true, root: "/repoB", status: map[string]string{"/repoB/new.txt": "??"}}
+	updated, _ := (*m).Update(gitInfoMsg{info: bg, dir: "/repoB"})
+	got := updated.(model)
+
+	if len(got.git.status) != 0 {
+		t.Fatalf("a background agent's git gather must not touch the active view, got %+v", got.git.status)
+	}
+	if len(got.workspaces[1].git.status) != 1 {
+		t.Fatalf("the background workspace should receive its own git state, got %+v", got.workspaces[1].git)
+	}
+}
+
+func TestActiveGitInfoAppliesToActive(t *testing.T) {
+	m := multiModel(1)
+	m.workspaces[0].cwd = "/repoA"
+
+	updated, _ := (*m).Update(gitInfoMsg{info: gitInfo{isRepo: true, root: "/repoA", branch: "main"}, dir: "/repoA"})
+	got := updated.(model)
+
+	if !got.gitReady || got.git.branch != "main" {
+		t.Fatalf("a gather for the active cwd should update the active view, got %+v", got.git)
+	}
+}
+
+func TestActiveAgentRowShowsLiveBusy(t *testing.T) {
+	m := multiModel(1)
+	m.busy = true // active agent is generating; its workspace copy isn't stashed yet
+	m.focus = paneAgents
+
+	if body := m.agentsBody(32, 4); !strings.Contains(body, "working") {
+		t.Fatalf("active row should reflect live busy state, got:\n%s", body)
+	}
+}
+
+func TestBackgroundCompletionAutosavesRealActive(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+	m := multiModel(2)
+	m.workspaces[0].agent.Load([]llm.Message{{Role: llm.RoleUser, Content: "agent zero task"}})
+	m.workspaces[1].agent.Load([]llm.Message{{Role: llm.RoleUser, Content: "agent one task"}})
+	m.workspaces[1].busy = true
+
+	updated, _ := (*m).Update(doneMsg{id: 1})
+	got := updated.(model)
+
+	if got.active != 0 {
+		t.Fatalf("a background completion should leave the active agent unchanged, got %d", got.active)
+	}
+	store, err := session.Open()
+	if err != nil {
+		t.Fatalf("session.Open: %v", err)
+	}
+	sess, err := store.Load(got.sessionName)
+	if err != nil {
+		t.Fatalf("autosave should persist a loadable session: %v", err)
+	}
+	if sess.Active != 0 {
+		t.Fatalf("autosaved Active = %d, want 0 (the user-facing active)", sess.Active)
+	}
+	if len(sess.Agents) != 2 {
+		t.Fatalf("autosave should record both agents, got %d", len(sess.Agents))
+	}
+}
+
+func TestResumeReturnsGitRefresh(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+	m := multiModel(1)
+	m.workspaces[0].agent.Load([]llm.Message{{Role: llm.RoleUser, Content: "save me"}})
+	if s := m.save(""); s != "" {
+		t.Fatalf("save failed: %s", s)
+	}
+
+	if cmd := m.resume(m.sessionName); cmd == nil {
+		t.Fatal("resume should return a command to refresh git state")
 	}
 }
 

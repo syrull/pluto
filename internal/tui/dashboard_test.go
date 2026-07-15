@@ -110,7 +110,7 @@ func TestInitGathersGit(t *testing.T) {
 
 func TestGitInfoMsgStored(t *testing.T) {
 	var tm tea.Model = newDashModel()
-	tm, _ = tm.Update(gitInfoMsg{isRepo: true, branch: "topic"})
+	tm, _ = tm.Update(gitInfoMsg{info: gitInfo{isRepo: true, branch: "topic"}})
 	got := tm.(model)
 	if !got.gitReady || !got.git.isRepo || got.git.branch != "topic" {
 		t.Fatalf("gitInfoMsg not stored: gitReady=%v git=%+v", got.gitReady, got.git)

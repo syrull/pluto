@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/session"
@@ -99,15 +101,16 @@ func (m *model) save(name string) string {
 	return ""
 }
 
-// resume loads a saved session and rebuilds its agents. A multi-agent session is
-// fully reconstructed (needs the agent factory); a single-agent or v1 session is
+// resume loads a saved session and rebuilds its agents, returning a command to
+// refresh the restored active agent's git state. A multi-agent session is fully
+// reconstructed (needs the agent factory); a single-agent or v1 session is
 // loaded into the existing active agent.
-func (m *model) resume(id string) {
+func (m *model) resume(id string) tea.Cmd {
 	store, err := m.sessionStore()
 	if err != nil {
 		m.pushText(styleErr.Render("✗ sessions unavailable: " + err.Error()))
 		m.syncViewport()
-		return
+		return nil
 	}
 	sess, err := store.Load(id)
 	if err != nil {
@@ -117,7 +120,7 @@ func (m *model) resume(id string) {
 		}
 		m.pushText(styleErr.Render(msg))
 		m.syncViewport()
-		return
+		return nil
 	}
 	agents := sess.AgentList()
 	active := sess.Active
@@ -140,13 +143,14 @@ func (m *model) resume(id string) {
 		m.sessionName = sess.ID
 		m.notice = "✓ resumed " + sess.ID
 		m.syncViewport()
-		return
+		return m.gatherGit()
 	}
 
 	m.restoreAgents(agents, active)
 	m.sessionName = sess.ID
 	m.notice = "✓ resumed " + sess.ID
 	m.syncViewport()
+	return m.gatherGit()
 }
 
 // restoreAgents rebuilds every workspace from a saved multi-agent set and makes

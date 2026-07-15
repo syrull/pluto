@@ -93,7 +93,7 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 	if dir == "" {
 		dir = cwd()
 	}
-	verdict, err := j.Assess(ctx, judge.Request{Command: cmd, Intent: intent, Why: why, Cwd: dir, Roots: []string{dir}})
+	verdict, err := j.Assess(ctx, judge.Request{Command: cmd, Intent: intent, Why: why, Cwd: dir})
 	if err != nil {
 		allowed := cfg.OnJudgeError == judge.DecisionAllow
 		reason := "judge unavailable — allowed by policy"

@@ -709,6 +709,8 @@ func (m model) agentsBody(width, height int) string {
 }
 
 // agentRow renders a single agent entry: cursor gutter, number, label, status.
+// The active row reads live model state (m.busy/m.git) rather than the
+// workspace copy, which is only synced on stash, so its status is never stale.
 func (m model) agentRow(i int, w *workspace, width int, selected bool) string {
 	gutter := "  "
 	if selected {
@@ -716,10 +718,12 @@ func (m model) agentRow(i int, w *workspace, width int, selected bool) string {
 	}
 	name := fmt.Sprintf("%d %s", i+1, m.workspaceLabel(i))
 	nameStyle := styleTreeFile
+	busy, unread, changes := w.busy, w.unread, len(w.git.status) > 0
 	if i == m.active {
 		nameStyle = styleTreeDir.Bold(true)
+		busy, unread, changes = m.busy, false, len(m.git.status) > 0
 	}
-	status := agentStatus(w, i == m.active)
+	status := agentStatus(busy, unread, changes)
 	avail := width - 2 - lipgloss.Width(status)
 	if avail < 4 {
 		avail = 4
@@ -732,14 +736,14 @@ func (m model) agentRow(i int, w *workspace, width int, selected bool) string {
 }
 
 // agentStatus renders the trailing per-agent status glyph: working, unread
-// background progress, or a dirty-tree marker for the active agent.
-func agentStatus(w *workspace, active bool) string {
+// background progress, or a dirty-tree marker.
+func agentStatus(busy, unread, changes bool) string {
 	switch {
-	case w.busy:
+	case busy:
 		return styleWorking.Render("● working")
-	case w.unread:
+	case unread:
 		return styleReview.Render("• updated")
-	case active && len(w.git.status) > 0:
+	case changes:
 		return styleHint.Render("✎")
 	default:
 		return ""

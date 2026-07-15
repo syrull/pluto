@@ -90,34 +90,37 @@ func (m *model) interrupt() {
 }
 
 // finishTurn wraps up a completed run for the current (active or swapped-in)
-// workspace: it clears run state, autosaves, requests an auto-label after the
-// first turn, refreshes git, and restarts the turn if a message was steered in
-// as it ended.
-func (m *model) finishTurn() tea.Cmd {
+// workspace: it clears run state, requests an auto-label after the first turn,
+// and refreshes git. It does NOT start the steered follow-up itself — it returns
+// any messages steered in as the run ended so the caller can persist (autosave)
+// before restartSteering starts a new goroutine, avoiding a Snapshot/Run race.
+func (m *model) finishTurn() ([]agent.SteerMessage, tea.Cmd) {
 	m.flushStream()
 	m.busy = false
 	m.events = nil
 	m.cancel = nil
-	m.autosave()
 	label := m.maybeLabel(m.active)
-	// A message steered in as the run was ending wasn't folded into it; continue
-	// the conversation with it as the next turn, carrying any attachments that
-	// rode along with the steered messages.
-	if pending := m.agent.TakeSteering(); len(pending) > 0 {
-		m.busy = true
-		texts := make([]string, 0, len(pending))
-		var atts []llm.Attachment
-		for _, p := range pending {
-			texts = append(texts, p.Text)
-			atts = append(atts, p.Attachments...)
-		}
-		cmd := m.runAgent(strings.Join(texts, "\n\n"), atts)
-		m.syncViewport()
-		return tea.Batch(cmd, m.gatherGit(), label)
-	}
+	pending := m.agent.TakeSteering()
 	m.syncViewport()
 	// Refresh the sidebar to reflect any files the turn changed.
-	return tea.Batch(m.gatherGit(), label)
+	return pending, tea.Batch(m.gatherGit(), label)
+}
+
+// restartSteering continues the conversation with messages that were steered in
+// as the previous run ended, carrying along any attachments. It must run in the
+// owning workspace's context (m.active pointing at it) so the follow-up run uses
+// that agent's directory and id.
+func (m *model) restartSteering(pending []agent.SteerMessage) tea.Cmd {
+	m.busy = true
+	texts := make([]string, 0, len(pending))
+	var atts []llm.Attachment
+	for _, p := range pending {
+		texts = append(texts, p.Text)
+		atts = append(atts, p.Attachments...)
+	}
+	cmd := m.runAgent(strings.Join(texts, "\n\n"), atts)
+	m.syncViewport()
+	return cmd
 }
 
 func (m *model) handleCommand(line string) (string, tea.Cmd) {
@@ -174,8 +177,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			m.pickerKind = pickerResume
 			return "", nil
 		}
-		m.resume(fields[1])
-		return "", nil
+		return "", m.resume(fields[1])
 
 	case "/login":
 		if m.login == nil {
@@ -629,16 +631,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		i := m.workspaceIndex(msg.id)
 		switch {
-		case len(m.workspaces) == 0: // bare/test model
-			return m, m.finishTurn()
+		case len(m.workspaces) == 0, i == m.active: // bare/test model or the active agent
+			pending, cmd := m.finishTurn()
+			// Autosave before any restarted goroutine so Snapshot never races Run.
+			m.autosave()
+			if len(pending) > 0 {
+				cmd = tea.Batch(cmd, m.restartSteering(pending))
+			}
+			return m, cmd
 		case i < 0:
 			return m, nil
-		case i == m.active:
-			return m, m.finishTurn()
 		default:
+			var pending []agent.SteerMessage
 			var cmd tea.Cmd
-			m.onWorkspace(i, func() { cmd = m.finishTurn() })
+			m.onWorkspace(i, func() { pending, cmd = m.finishTurn() })
 			m.workspaces[i].unread = true
+			// autosave runs here (active restored) so it records the real active,
+			// and before restartSteering starts the follow-up run's goroutine.
+			m.autosave()
+			if len(pending) > 0 {
+				var rcmd tea.Cmd
+				m.onWorkspace(i, func() { rcmd = m.restartSteering(pending) })
+				cmd = tea.Batch(cmd, rcmd)
+			}
 			return m, cmd
 		}
 	case loginDoneMsg:
@@ -697,15 +712,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.orbitFrame = (m.orbitFrame + 1) % widgets.OrbitSteps
 		return m, orbitTick(m.orbitEpoch)
 	case gitInfoMsg:
-		m.git = gitInfo(msg)
-		m.gitReady = true
-		if m.tree != nil {
-			m.tree.SetStatus(m.buildStatusStyles())
-		}
-		m.changes = m.buildChangesList()
-		if m.changes == nil && m.focus == paneChanges {
-			m.focus = paneTree
-		}
+		m.applyGitInfo(msg)
 		return m, nil
 	case editorDoneMsg:
 		// The editor may have changed the file; refresh a still-open file/diff
@@ -837,7 +844,7 @@ func (m *model) applyPick(kind pickerKind, target string) tea.Cmd {
 			m.notice = thinkNotice(th.ThinkLevel())
 		}
 	case pickerResume:
-		m.resume(target)
+		return m.resume(target)
 	case pickerNewAgent:
 		return m.applyNewAgentPick(target)
 	}

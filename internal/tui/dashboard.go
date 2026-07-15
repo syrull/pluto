@@ -62,17 +62,22 @@ type gitInfo struct {
 	status      map[string]string // abs path → porcelain XY code, for tree markers
 }
 
-// gitInfoMsg delivers gathered git state to the model.
-type gitInfoMsg gitInfo
+// gitInfoMsg delivers gathered git state, tagged with the directory it was
+// gathered for so a background agent's result is routed to its own workspace
+// instead of clobbering the active one. An empty dir is untagged (process cwd).
+type gitInfoMsg struct {
+	info gitInfo
+	dir  string
+}
 
 // gatherGitCmd collects git state for the process cwd off the UI goroutine so
 // startup isn't blocked.
-func gatherGitCmd() tea.Msg { return gitInfoMsg(gatherGitIn("")) }
+func gatherGitCmd() tea.Msg { return gitInfoMsg{info: gatherGitIn("")} }
 
 // gatherGitCmdIn collects git state for a specific directory (an agent's cwd or
-// worktree), returning the same gitInfoMsg the active workspace consumes.
+// worktree), tagging the result with that directory.
 func gatherGitCmdIn(dir string) tea.Cmd {
-	return func() tea.Msg { return gitInfoMsg(gatherGitIn(dir)) }
+	return func() tea.Msg { return gitInfoMsg{info: gatherGitIn(dir), dir: dir} }
 }
 
 func gitRun(args ...string) (string, error) {
