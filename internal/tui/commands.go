@@ -10,6 +10,7 @@ import (
 // have a matching case in handleCommand (guarded by TestSlashCommandsMatchDispatch).
 var slashCommands = []widgets.Command{
 	{Name: "/new", Desc: "start a new conversation"},
+	{Name: "/close", Desc: "close the active agent"},
 	{Name: "/dash", Desc: "open the dashboard"},
 	{Name: "/save", Args: "[name]", Desc: "save the current conversation"},
 	{Name: "/resume", Args: "[id]", Desc: "resume a saved conversation"},
