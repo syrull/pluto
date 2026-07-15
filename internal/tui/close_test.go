@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/syrull/pluto/internal/llm"
@@ -211,6 +212,31 @@ func TestRemoveWorktreeAt(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("worktree dir should be gone, stat err = %v", err)
+	}
+}
+
+func TestCloseActiveAgentLogsOutcome(t *testing.T) {
+	read := enableTUILog(t, "debug")
+	m := multiModel(2)
+	m.switchTo(1)
+
+	m.closeActiveAgent(false)
+
+	out := read()
+	if !strings.Contains(out, "close agent done") || !strings.Contains(out, "mode=switch") {
+		t.Fatalf("close outcome not logged:\n%s", out)
+	}
+}
+
+func TestCloseLastAgentLogsResetMode(t *testing.T) {
+	read := enableTUILog(t, "debug")
+	m := multiModel(1)
+
+	m.closeActiveAgent(false)
+
+	out := read()
+	if !strings.Contains(out, "mode=reset-last") {
+		t.Fatalf("reset-last close mode not logged:\n%s", out)
 	}
 }
 
