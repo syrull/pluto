@@ -18,6 +18,49 @@ func newTestRegistry(t *testing.T) *tool.Registry {
 	return reg
 }
 
+// TestSystemPromptBaseHasNoToolGuidance guards issue #73: per-tool guidance is
+// re-sent every turn, so it must live only in a tool's Description, never be
+// duplicated in systemPromptBase. Each phrase below is carried by a tool
+// description and must be absent from the base prompt.
+func TestSystemPromptBaseHasNoToolGuidance(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.MustRegister(tools.Read{})
+	reg.MustRegister(tools.Write{})
+	reg.MustRegister(tools.Bash{})
+	reg.MustRegister(tools.Edit{})
+	reg.MustRegister(tools.Find{})
+
+	var descriptions strings.Builder
+	for _, tl := range reg.Tools() {
+		descriptions.WriteString(tl.Description())
+		descriptions.WriteByte('\n')
+	}
+	descs := descriptions.String()
+
+	toolPhrases := []string{
+		"cat/head/tail",
+		"grep/rg/ag",
+		"intent",
+		"offset",
+		"overflow the context window",
+	}
+	for _, p := range toolPhrases {
+		if !strings.Contains(descs, p) {
+			t.Errorf("expected a tool Description to carry %q", p)
+		}
+		if strings.Contains(systemPromptBase, p) {
+			t.Errorf("systemPromptBase duplicates per-tool guidance %q; it belongs only in a tool Description", p)
+		}
+	}
+
+	if !strings.Contains(systemPromptBase, "minimal file-editing agent") {
+		t.Errorf("systemPromptBase lost its role framing")
+	}
+	if !strings.Contains(systemPromptBase, "explore the relevant code first") {
+		t.Errorf("systemPromptBase lost the explore-before-acting behavior")
+	}
+}
+
 // TestBuildSystemPromptNoContextFiles verifies output when no context files
 // are present: starts with systemPromptBase, contains "Available tools:",
 // and contains no "Project context from" substring.

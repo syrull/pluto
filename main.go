@@ -29,19 +29,14 @@ import (
 // left as "dev" for local builds.
 var version = "dev"
 
-// systemPromptBase is the static guidance prepended to the dynamically
-// generated tool listing built from the registry (see buildSystemPrompt).
+// systemPromptBase is the static, always-true framing prepended to the
+// dynamically generated tool listing built from the registry (see
+// buildSystemPrompt). Per-tool rules (read/find over cat/grep, bash intent/why,
+// bounded output) live in each tool's Description so they aren't paid for twice.
 const systemPromptBase = "You are a minimal file-editing agent. " +
-	"Always use the read tool (not cat/head/tail/sed/less inside bash) to view file contents, and " +
-	"the find tool (not grep/rg/ag/find inside bash) to search them — both return bounded, " +
-	"pre-truncated output that won't blow up the context window, and read/find accept offset/limit " +
-	"and path/glob to page through or scope large results. Reserve bash for actions those tools " +
-	"can't do (running builds/tests, git, listing directories, etc.). " +
 	"Before making any decision or editing code, always explore the relevant code first and clearly " +
 	"understand what it does — read the surrounding context, trace callers and definitions, and " +
-	"confirm your understanding rather than acting on assumptions. " +
-	"When you run bash, always fill its intent/why arguments: commands are reviewed by auto mode and " +
-	"may be refused if destructive or malicious. If a command is refused, adapt with a safer approach."
+	"confirm your understanding rather than acting on assumptions."
 
 // contextFiles are project instruction files auto-injected into the system
 // prompt when present in the working directory, in this order.
