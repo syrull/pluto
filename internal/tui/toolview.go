@@ -123,9 +123,25 @@ func formatToolCallArgs(toolName, raw string) string {
 		return formatBashArgs(raw)
 	case "find":
 		return formatFindArgs(raw)
+	case "web_search":
+		return formatWebSearchArgs(raw)
 	default:
 		return formatGenericArgs(raw)
 	}
+}
+
+// formatWebSearchArgs extracts the query from a web_search call's JSON args. On
+// malformed JSON it falls back to the raw args for debugging; a well-formed call
+// with no query yields an empty string (rendered as "web_search()") rather than
+// the literal "{}".
+func formatWebSearchArgs(raw string) string {
+	var a struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
+		return raw
+	}
+	return a.Query
 }
 
 func formatReadArgs(raw string) string {
@@ -281,6 +297,8 @@ func resultSummary(toolName string, n int) string {
 		return styleHint.Render(fmt.Sprintf("%d match line(s)", n))
 	case "bash":
 		return styleHint.Render(fmt.Sprintf("%d line(s) of output", n))
+	case "web_search":
+		return styleHint.Render(fmt.Sprintf("%d result(s)", n))
 	default:
 		return styleHint.Render(fmt.Sprintf("%d line(s)", n))
 	}

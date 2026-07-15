@@ -659,6 +659,7 @@ func buildTools(tools []llm.ToolSpec) []wireTool {
 func mapResponse(wire wireResponse) llm.Response {
 	var out llm.Response
 	var sources sourceSet
+	var pendingSearch string // args of the last server_tool_use, paired with its result
 	for _, b := range wire.Content {
 		switch b.Type {
 		case "text":
@@ -673,8 +674,18 @@ func mapResponse(wire wireResponse) llm.Response {
 			out.ToolCalls = append(out.ToolCalls, llm.ToolCall{
 				ID: b.ID, Name: b.Name, Args: json.RawMessage(b.Input),
 			})
-			// server_tool_use and web_search_tool_result are executed by the
-			// API within this turn; they carry no client-actionable call.
+		case "server_tool_use":
+			// Executed by the API within this turn; surfaced for display only.
+			// Only web search is enabled and paired with a result below, so
+			// ignore any other server tool to avoid mispairing its args.
+			if b.Name == webSearchToolName {
+				pendingSearch = serverToolArgs(string(b.Input))
+			}
+		case "web_search_tool_result":
+			out.ServerToolUses = append(out.ServerToolUses, llm.ServerToolUse{
+				Name: webSearchToolName, Args: pendingSearch, Result: webSearchResultSummary(b.Content),
+			})
+			pendingSearch = ""
 		}
 	}
 	out.Text += sources.footer()
@@ -682,6 +693,75 @@ func mapResponse(wire wireResponse) llm.Response {
 		out.Usage = llm.Usage{InputTokens: wire.Usage.contextTokens(), OutputTokens: wire.Usage.OutputTokens}
 	}
 	return out
+}
+
+// wireWebSearchResult is one result inside a web_search_tool_result block.
+type wireWebSearchResult struct {
+	URL   string `json:"url"`
+	Title string `json:"title"`
+}
+
+// serverToolArgs normalizes a server tool's JSON input for display, defaulting
+// to an empty object when the provider omits it so the two decode paths
+// (streaming and non-streaming) render identically.
+func serverToolArgs(input string) string {
+	if input == "" {
+		return "{}"
+	}
+	return input
+}
+
+// collapseWhitespace flattens runs of whitespace (including newlines) to single
+// spaces so a result's title/url can't spill onto extra lines; the TUI derives
+// the result count from the number of lines in the summary.
+func collapseWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// formatWebResult renders a web result as "title (url)", falling back to the URL
+// as the title when none is given. When alwaysURL is false the parenthetical is
+// dropped if it would merely repeat the title; the Sources footer passes true so
+// every cited URL stays visible.
+func formatWebResult(title, url string, alwaysURL bool) string {
+	if title == "" {
+		title = url
+	}
+	if url != "" && (alwaysURL || url != title) {
+		return title + " (" + url + ")"
+	}
+	return title
+}
+
+// webSearchResultSummary renders a web_search_tool_result block's content as a
+// short, human-readable list of "title (url)" lines, one per result, or a note
+// when the search errored or returned nothing.
+func webSearchResultSummary(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "no results"
+	}
+	var results []wireWebSearchResult
+	if err := json.Unmarshal(raw, &results); err == nil {
+		if len(results) == 0 {
+			return "no results"
+		}
+		var b strings.Builder
+		for i, r := range results {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			// Collapse internal whitespace so each result stays on one line.
+			b.WriteString(formatWebResult(collapseWhitespace(r.Title), collapseWhitespace(r.URL), false))
+		}
+		return b.String()
+	}
+	// Errors arrive as a single object rather than a list.
+	var e struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if json.Unmarshal(raw, &e) == nil && e.ErrorCode != "" {
+		return "error: " + e.ErrorCode
+	}
+	return "no results"
 }
 
 func rawOrNull(r json.RawMessage) json.RawMessage {
@@ -730,15 +810,10 @@ func (s *sourceSet) footer() string {
 	var b strings.Builder
 	b.WriteString("\n\nSources:\n")
 	for _, c := range s.order {
-		title := c.Title
-		if title == "" {
-			title = c.URL
-		}
 		b.WriteString("- ")
-		b.WriteString(title)
-		b.WriteString(" (")
-		b.WriteString(c.URL)
-		b.WriteString(")\n")
+		// Always show the URL so every cited source stays visible/clickable.
+		b.WriteString(formatWebResult(c.Title, c.URL, true))
+		b.WriteByte('\n')
 	}
 	return b.String()
 }
