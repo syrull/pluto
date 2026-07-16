@@ -201,19 +201,19 @@ func TestBuildSystemPromptIndexesSkills(t *testing.T) {
 	t.Chdir(dir)
 	reg := newTestRegistry(t)
 
-	skillsDir := filepath.Join(dir, "skills")
-	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+	skillDir := filepath.Join(dir, "skills", "run-tests")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := "SECRET_SKILL_BODY_LINE that must not be front-loaded"
-	content := "# Run the test suite\n\n" + body + "\n"
-	if err := os.WriteFile(filepath.Join(skillsDir, "run-tests.md"), []byte(content), 0o644); err != nil {
+	content := "---\nname: run-tests\ndescription: Run the test suite\n---\n# Run the test suite\n\n" + body + "\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	prompt := buildSystemPrompt(reg)
 
-	if !strings.Contains(prompt, "--- Skills (load a full playbook on demand with the skill tool) ---") {
+	if !strings.Contains(prompt, "--- Skills (load a skill's full instructions on demand with the skill tool) ---") {
 		t.Errorf("buildSystemPrompt() missing skills index header")
 	}
 	if !strings.Contains(prompt, "- run-tests: Run the test suite") {

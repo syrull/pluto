@@ -38,21 +38,26 @@ func captureToolDebug(t *testing.T) func() string {
 	}
 }
 
+// seedSkill writes a skill folder <dir>/skills/<name>/SKILL.md.
 func seedSkill(t *testing.T, dir, name, content string) {
 	t.Helper()
-	sd := filepath.Join(dir, skills.DirName)
+	sd := filepath.Join(dir, skills.DirName, name)
 	if err := os.MkdirAll(sd, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sd, name), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sd, skills.FileName), []byte(content), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 }
 
+func skillDoc(name, desc, body string) string {
+	return "---\nname: " + name + "\ndescription: " + desc + "\n---\n" + body + "\n"
+}
+
 func TestSkillListsAvailable(t *testing.T) {
 	dir := t.TempDir()
-	seedSkill(t, dir, "run-tests.md", "# Run the test suite\nbody\n")
-	seedSkill(t, dir, "cut-release.md", "Cut a release\nbody\n")
+	seedSkill(t, dir, "run-tests", skillDoc("run-tests", "Run the test suite", "body"))
+	seedSkill(t, dir, "cut-release", skillDoc("cut-release", "Cut a release", "body"))
 	ctx := workdir.With(context.Background(), dir)
 
 	out, err := Skill{}.Execute(ctx, json.RawMessage(`{}`))
@@ -80,7 +85,7 @@ func TestSkillListEmptyDir(t *testing.T) {
 
 func TestSkillLoadsBody(t *testing.T) {
 	dir := t.TempDir()
-	seedSkill(t, dir, "run-tests.md", "# Run the test suite\n\nRun go test ./...\n")
+	seedSkill(t, dir, "run-tests", skillDoc("run-tests", "Run the suite", "# Run the test suite\n\nRun go test ./..."))
 	ctx := workdir.With(context.Background(), dir)
 
 	out, err := Skill{}.Execute(ctx, json.RawMessage(`{"name":"run-tests"}`))
@@ -93,11 +98,14 @@ func TestSkillLoadsBody(t *testing.T) {
 	if !strings.Contains(out, "Run go test ./...") {
 		t.Fatalf("load missing body: %q", out)
 	}
+	if strings.Contains(out, "description:") {
+		t.Fatalf("load leaked frontmatter: %q", out)
+	}
 }
 
 func TestSkillLoadMissingListsAvailable(t *testing.T) {
 	dir := t.TempDir()
-	seedSkill(t, dir, "run-tests.md", "Run the test suite\n")
+	seedSkill(t, dir, "run-tests", skillDoc("run-tests", "Run the test suite", "body"))
 	ctx := workdir.With(context.Background(), dir)
 
 	_, err := Skill{}.Execute(ctx, json.RawMessage(`{"name":"nope"}`))
@@ -129,7 +137,7 @@ func TestSkillInvalidJSON(t *testing.T) {
 func TestSkillLoadIsLogged(t *testing.T) {
 	read := captureToolDebug(t)
 	dir := t.TempDir()
-	seedSkill(t, dir, "run-tests.md", "Run the test suite\nbody\n")
+	seedSkill(t, dir, "run-tests", skillDoc("run-tests", "Run the test suite", "body"))
 	ctx := workdir.With(context.Background(), dir)
 
 	if _, err := (Skill{}).Execute(ctx, json.RawMessage(`{"name":"run-tests"}`)); err != nil {

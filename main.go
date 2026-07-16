@@ -46,8 +46,8 @@ var contextFiles = []string{"CLAUDE.md", "AGENTS.md"}
 // buildSystemPrompt appends a listing of the registered tools to the static
 // base so the prompt always reflects the actual registry rather than a
 // hardcoded list that can drift as tools are added or removed. A compact skills
-// index (name + summary, see internal/skills) follows so the model knows which
-// on-demand playbooks exist without paying for their full bodies — those are
+// index (name + description, see internal/skills) follows so the model knows
+// which on-demand skills exist without paying for their full bodies — those are
 // loaded lazily via the skill tool. Any project context files (see contextFiles)
 // present in the working directory are injected next so their guidance rides
 // along with the system message on every conversation reset. A one-shot repo
@@ -65,7 +65,7 @@ func buildSystemPrompt(reg *tool.Registry) string {
 	list := skills.List(skills.DirName)
 	skillsTimer.Stop("dir", skills.DirName, "count", len(list))
 	if len(list) > 0 {
-		fmt.Fprintf(&b, "\n\n--- Skills (load a full playbook on demand with the skill tool) ---\n%s", skills.Render(list))
+		fmt.Fprintf(&b, "\n\n--- Skills (load a skill's full instructions on demand with the skill tool) ---\n%s", skills.Render(list))
 		debug.Info("lifecycle", "skills indexed", "count", len(list))
 	}
 	for _, name := range contextFiles {

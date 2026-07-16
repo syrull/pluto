@@ -1,11 +1,13 @@
-// Package skills discovers on-demand playbooks stored as flat text files under
-// a skills/ directory. Only a compact index (name + one-line summary) rides in
-// the system prompt; a skill's full body is loaded lazily via the skill tool,
-// keeping the always-on prompt small.
+// Package skills discovers on-demand Agent Skills stored under a skills/
+// directory. Each skill is a self-contained folder holding a SKILL.md file with
+// YAML frontmatter (name + description) followed by Markdown instructions,
+// mirroring the open Agent Skills standard. Only a compact index (name +
+// description) rides in the system prompt; a skill's full body is loaded lazily
+// via the skill tool, keeping the always-on prompt small (progressive
+// disclosure).
 package skills
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -17,27 +19,28 @@ import (
 )
 
 // DirName is the conventional directory, relative to the working directory,
-// that holds skill playbooks.
+// that holds skill folders.
 const DirName = "skills"
 
-const (
-	maxSummaryLen  = 100
-	maxSummaryScan = 64 * 1024
-)
+// FileName is the metadata + instructions file inside each skill folder.
+const FileName = "SKILL.md"
 
-// exts are the file extensions treated as skills, in preference order for Load.
-var exts = []string{".md", ".txt"}
+// maxSummaryLen bounds an indexed description; it matches the Agent Skills
+// standard's own description length limit so detailed trigger text survives.
+const maxSummaryLen = 1024
 
-// Skill is a discovered playbook's index entry: its name (the filename without
-// extension) and a one-line summary derived from the file's first line.
+// Skill is a discovered skill's index entry: its name (the folder name) and the
+// description drawn from SKILL.md frontmatter that the model uses to decide when
+// to load the full body.
 type Skill struct {
 	Name    string
 	Summary string
 }
 
 // List discovers skills under dir, sorted by name. It is best-effort: a missing
-// or unreadable directory yields nil, and files without a summary (empty or
-// whitespace-only) are skipped since they can't be loaded either.
+// or unreadable directory yields nil, and folders whose SKILL.md is missing,
+// unreadable, or carries no description are skipped since they can't be
+// triggered or usefully listed.
 func List(dir string) []Skill {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -46,61 +49,48 @@ func List(dir string) []Skill {
 		}
 		return nil
 	}
-	// Dedupe by name: when the same basename exists with several allowed
-	// extensions, keep the one Load would resolve (earliest in exts) so the index
-	// never advertises an entry whose body can't be loaded by that name.
-	seen := make(map[string]ranked)
+	var out []Skill
 	for _, e := range entries {
-		if e.IsDir() {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		name := e.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
+		if s, ok := index(dir, e.Name()); ok {
+			out = append(out, s)
 		}
-		rank := extRank(strings.ToLower(filepath.Ext(name)))
-		if rank < 0 {
-			continue
-		}
-		summary := readSummary(filepath.Join(dir, name))
-		if summary == "" {
-			continue
-		}
-		base := strings.TrimSuffix(name, filepath.Ext(name))
-		cur := ranked{Skill{Name: base, Summary: summary}, rank}
-		if prev, ok := seen[base]; ok {
-			keep, drop := cur, prev
-			if prev.rank <= cur.rank {
-				keep, drop = prev, cur
-			}
-			debug.Debug("tool", "duplicate skill name; kept higher-preference file",
-				"name", base, "kept", exts[keep.rank], "dropped", exts[drop.rank])
-			seen[base] = keep
-			continue
-		}
-		seen[base] = cur
 	}
-	if len(seen) == 0 {
+	if len(out) == 0 {
 		return nil
-	}
-	out := make([]Skill, 0, len(seen))
-	for _, r := range seen {
-		out = append(out, r.skill)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// ranked pairs a discovered skill with its extension preference rank (its index
-// in exts) so List resolves same-name collisions the way Load does.
-type ranked struct {
-	skill Skill
-	rank  int
+// index reads a skill folder's SKILL.md and derives its index entry. ok is false
+// when the file is missing/unreadable or has no description.
+func index(dir, name string) (Skill, bool) {
+	path := filepath.Join(dir, name, FileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			debug.Warn("tool", "skill file unreadable", "path", path, "err", err)
+		}
+		return Skill{}, false
+	}
+	meta, _ := parse(string(data))
+	if n := meta["name"]; n != "" && n != name {
+		debug.Debug("tool", "skill name mismatch; using folder name", "folder", name, "frontmatter", n)
+	}
+	desc := oneLine(meta["description"])
+	if desc == "" {
+		debug.Debug("tool", "skill has no description; skipped", "name", name, "path", path)
+		return Skill{}, false
+	}
+	return Skill{Name: name, Summary: truncate(desc, maxSummaryLen)}, true
 }
 
-// Load returns the full text of the named skill under dir. name may be given
-// with or without a known extension. It errors on an unknown, empty, or unsafe
-// name.
+// Load returns the Markdown body (instructions) of the named skill under dir,
+// with the YAML frontmatter stripped since its fields already ride in the index.
+// It errors on an unknown, empty, or unsafe name.
 func Load(dir, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -109,36 +99,24 @@ func Load(dir, name string) (string, error) {
 	if !safeName(name) {
 		return "", fmt.Errorf("skills: invalid skill name %q", name)
 	}
-	base := Canonical(name)
-	for _, ext := range exts {
-		path := filepath.Join(dir, base+ext)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				debug.Warn("tool", "skill file unreadable", "path", path, "err", err)
-			}
-			continue
+	path := filepath.Join(dir, name, FileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("skills: skill %q not found", name)
 		}
-		body := strings.TrimSpace(string(data))
-		if body == "" {
-			return "", fmt.Errorf("skills: skill %q is empty", base)
-		}
-		return body, nil
+		debug.Warn("tool", "skill file unreadable", "path", path, "err", err)
+		return "", fmt.Errorf("skills: skill %q: %w", name, err)
 	}
-	return "", fmt.Errorf("skills: skill %q not found", base)
+	_, body := parse(string(data))
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", fmt.Errorf("skills: skill %q is empty", name)
+	}
+	return body, nil
 }
 
-// Canonical strips a trailing known skill extension from name, mirroring how Load
-// resolves a file, so callers can display the same name shown in the index.
-func Canonical(name string) string {
-	name = strings.TrimSpace(name)
-	if allowedExt(strings.ToLower(filepath.Ext(name))) {
-		return strings.TrimSuffix(name, filepath.Ext(name))
-	}
-	return name
-}
-
-// Render formats skills as compact "- name: summary" lines for the always-on
+// Render formats skills as compact "- name: description" lines for the always-on
 // index, or "" when the list is empty.
 func Render(list []Skill) string {
 	if len(list) == 0 {
@@ -154,19 +132,49 @@ func Render(list []Skill) string {
 	return b.String()
 }
 
-// allowedExt reports whether ext (lowercased, dot-prefixed) is a skill file type.
-func allowedExt(ext string) bool { return extRank(ext) >= 0 }
+// parse splits SKILL.md content into its YAML frontmatter scalar fields and the
+// Markdown body. When content has no valid (terminated) leading frontmatter
+// block, meta is nil and body is the full content unchanged.
+func parse(content string) (meta map[string]string, body string) {
+	s := strings.TrimPrefix(content, "\ufeff")
+	first, after, ok := strings.Cut(s, "\n")
+	if !ok || strings.TrimSpace(first) != "---" {
+		return nil, content
+	}
+	meta = map[string]string{}
+	rest := after
+	for {
+		line, next, found := strings.Cut(rest, "\n")
+		if strings.TrimSpace(line) == "---" {
+			return meta, next
+		}
+		if k, v, ok := strings.Cut(line, ":"); ok {
+			k = strings.TrimSpace(k)
+			v = unquote(strings.TrimSpace(v))
+			if k != "" && v != "" {
+				meta[k] = v
+			}
+		}
+		if !found {
+			return nil, content // unterminated frontmatter
+		}
+		rest = next
+	}
+}
 
-// extRank returns ext's index in exts (its Load preference), or -1 when ext is
-// not a skill file type.
-func extRank(ext string) int {
-	for i, e := range exts {
-		if ext == e {
-			return i
+// unquote strips a single pair of matching surrounding quotes from s.
+func unquote(s string) string {
+	if len(s) >= 2 {
+		if q := s[0]; (q == '"' || q == '\'') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
 		}
 	}
-	return -1
+	return s
 }
+
+// oneLine collapses all runs of whitespace to single spaces so a multi-line or
+// padded description renders as one compact index line.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // safeName rejects names that could escape the skills directory.
 func safeName(name string) bool {
@@ -174,27 +182,6 @@ func safeName(name string) bool {
 		return false
 	}
 	return name == filepath.Base(name)
-}
-
-// readSummary returns the first non-empty line of the file with leading Markdown
-// heading markers stripped and length bounded, or "" when there is none.
-func readSummary(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		debug.Warn("tool", "skill file unreadable", "path", path, "err", err)
-		return ""
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 4096), maxSummaryScan)
-	for sc.Scan() {
-		line := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(sc.Text()), "#"))
-		if line == "" {
-			continue
-		}
-		return truncate(line, maxSummaryLen)
-	}
-	return ""
 }
 
 func truncate(s string, max int) string {

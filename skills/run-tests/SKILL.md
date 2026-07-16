@@ -1,3 +1,7 @@
+---
+name: run-tests
+description: How to run Pluto's test suite and pre-commit checks (make test/vet/fmt-check/all), scope a single package or test, and read failures. Use before pushing or when verifying a change.
+---
 # Run the test suite and pre-commit checks
 
 Match what CI enforces before pushing (`.github/workflows/ci.yml`):

@@ -34,14 +34,21 @@ func captureDebug(t *testing.T) func() string {
 	}
 }
 
+// seed writes a skill folder dir/name/SKILL.md with the given content.
 func seed(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", dir, err)
+	sd := filepath.Join(dir, name)
+	if err := os.MkdirAll(sd, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", sd, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(sd, FileName), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+// doc builds SKILL.md content with frontmatter and a body.
+func doc(name, desc, body string) string {
+	return "---\nname: " + name + "\ndescription: " + desc + "\n---\n" + body + "\n"
 }
 
 func TestListMissingDir(t *testing.T) {
@@ -58,8 +65,8 @@ func TestListEmptyDir(t *testing.T) {
 
 func TestListDiscoversAndSorts(t *testing.T) {
 	dir := t.TempDir()
-	seed(t, dir, "run-tests.md", "# Run the test suite\n\nRun `go test ./...`.\n")
-	seed(t, dir, "cut-release.txt", "Cut a tagged release\nmore body\n")
+	seed(t, dir, "run-tests", doc("run-tests", "Run the test suite", "# Run\ngo test ./..."))
+	seed(t, dir, "cut-release", doc("cut-release", "Cut a tagged release", "# Release\nmore body"))
 
 	list := List(dir)
 	if len(list) != 2 {
@@ -69,20 +76,25 @@ func TestListDiscoversAndSorts(t *testing.T) {
 		t.Fatalf("List() not sorted by name: %+v", list)
 	}
 	if list[0].Summary != "Cut a tagged release" {
-		t.Fatalf("txt summary = %q", list[0].Summary)
+		t.Fatalf("summary = %q", list[0].Summary)
 	}
 	if list[1].Summary != "Run the test suite" {
-		t.Fatalf("markdown heading not stripped: %q", list[1].Summary)
+		t.Fatalf("summary = %q", list[1].Summary)
 	}
 }
 
-func TestListSkipsNonSkillFilesDirsAndEmpty(t *testing.T) {
+func TestListSkipsNonDirsHiddenAndDescriptionless(t *testing.T) {
 	dir := t.TempDir()
-	seed(t, dir, "keep.md", "Keep me\n")
-	seed(t, dir, "ignore.go", "package x\n")
-	seed(t, dir, ".hidden.md", "Hidden\n")
-	seed(t, dir, "blank.md", "   \n\t\n")
-	if err := os.MkdirAll(filepath.Join(dir, "sub.md"), 0o755); err != nil {
+	seed(t, dir, "keep", doc("keep", "Keep me", "body"))
+	seed(t, dir, ".hidden", doc("hidden", "Hidden", "body"))
+	// A folder whose SKILL.md has no description can't be triggered; skip it.
+	seed(t, dir, "no-desc", "---\nname: no-desc\n---\nbody\n")
+	// A folder without any SKILL.md is not a skill.
+	if err := os.MkdirAll(filepath.Join(dir, "empty-folder"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A stray regular file is not a skill folder.
+	if err := os.WriteFile(filepath.Join(dir, "loose.md"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,7 +106,7 @@ func TestListSkipsNonSkillFilesDirsAndEmpty(t *testing.T) {
 
 func TestListSummaryTruncated(t *testing.T) {
 	dir := t.TempDir()
-	seed(t, dir, "long.md", strings.Repeat("x", maxSummaryLen+50)+"\n")
+	seed(t, dir, "long", doc("long", strings.Repeat("x", maxSummaryLen+50), "body"))
 	list := List(dir)
 	if len(list) != 1 {
 		t.Fatalf("List() len = %d", len(list))
@@ -104,29 +116,52 @@ func TestListSummaryTruncated(t *testing.T) {
 	}
 }
 
-func TestLoadReturnsFullBody(t *testing.T) {
+func TestListCollapsesMultilineDescription(t *testing.T) {
 	dir := t.TempDir()
-	body := "# Run the test suite\n\nRun `go test ./...` and read failures top-down.\n"
-	seed(t, dir, "run-tests.md", body)
+	seed(t, dir, "wrapped", "---\nname: wrapped\ndescription:   Use   this   when\t needed\n---\nbody\n")
+	list := List(dir)
+	if len(list) != 1 || list[0].Summary != "Use this when needed" {
+		t.Fatalf("summary not collapsed to one line: %+v", list)
+	}
+}
+
+func TestListNameMismatchLogged(t *testing.T) {
+	read := captureDebug(t)
+	dir := t.TempDir()
+	seed(t, dir, "folder-name", doc("other-name", "Desc", "body"))
+	if list := List(dir); len(list) != 1 || list[0].Name != "folder-name" {
+		t.Fatalf("List() should key on folder name: %+v", list)
+	}
+	if out := read(); !strings.Contains(out, "skill name mismatch") {
+		t.Fatalf("name mismatch not logged:\n%s", out)
+	}
+}
+
+func TestLoadReturnsBodyWithoutFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	seed(t, dir, "run-tests", doc("run-tests", "Run the suite", "# Run the test suite\n\nRun `go test ./...`."))
 
 	got, err := Load(dir, "run-tests")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if got != strings.TrimSpace(body) {
-		t.Fatalf("Load() = %q, want trimmed body", got)
+	if strings.Contains(got, "description:") || strings.HasPrefix(got, "---") {
+		t.Fatalf("Load() leaked frontmatter: %q", got)
+	}
+	if !strings.HasPrefix(got, "# Run the test suite") || !strings.Contains(got, "go test ./...") {
+		t.Fatalf("Load() body = %q", got)
 	}
 }
 
-func TestLoadAcceptsNameWithExtension(t *testing.T) {
+func TestLoadContentWithoutFrontmatter(t *testing.T) {
 	dir := t.TempDir()
-	seed(t, dir, "cut-release.txt", "Cut a release\n")
-	got, err := Load(dir, "cut-release.txt")
+	seed(t, dir, "plain", "# Just instructions\n\nno frontmatter here")
+	got, err := Load(dir, "plain")
 	if err != nil {
-		t.Fatalf("Load(with ext) error = %v", err)
+		t.Fatalf("Load() error = %v", err)
 	}
-	if got != "Cut a release" {
-		t.Fatalf("Load(with ext) = %q", got)
+	if got != "# Just instructions\n\nno frontmatter here" {
+		t.Fatalf("Load() = %q", got)
 	}
 }
 
@@ -145,7 +180,7 @@ func TestLoadEmptyName(t *testing.T) {
 
 func TestLoadEmptyBody(t *testing.T) {
 	dir := t.TempDir()
-	seed(t, dir, "blank.md", "  \n\t\n")
+	seed(t, dir, "blank", "---\nname: blank\ndescription: Blank\n---\n  \n\t\n")
 	_, err := Load(dir, "blank")
 	if err == nil || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("Load(empty body) error = %v, want empty", err)
@@ -154,32 +189,11 @@ func TestLoadEmptyBody(t *testing.T) {
 
 func TestLoadRejectsUnsafeName(t *testing.T) {
 	dir := t.TempDir()
-	seed(t, dir, "secret.md", "top secret\n")
+	seed(t, dir, "secret", doc("secret", "Secret", "top secret"))
 	for _, name := range []string{"../secret", "sub/secret", `..\secret`} {
 		if _, err := Load(dir, name); err == nil || !strings.Contains(err.Error(), "invalid") {
 			t.Fatalf("Load(%q) error = %v, want invalid", name, err)
 		}
-	}
-}
-
-func TestListDedupesByExtensionPreference(t *testing.T) {
-	dir := t.TempDir()
-	seed(t, dir, "foo.md", "From markdown\nmd body\n")
-	seed(t, dir, "foo.txt", "From text\ntxt body\n")
-
-	list := List(dir)
-	if len(list) != 1 {
-		t.Fatalf("List() len = %d, want 1 (deduped): %+v", len(list), list)
-	}
-	if list[0].Name != "foo" || list[0].Summary != "From markdown" {
-		t.Fatalf("List() kept wrong file, want the .md: %+v", list[0])
-	}
-	body, err := Load(dir, "foo")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if !strings.Contains(body, "md body") {
-		t.Fatalf("Load() = %q, want the preferred .md body", body)
 	}
 }
 
@@ -209,18 +223,24 @@ func TestListWarnsOnUnreadableDir(t *testing.T) {
 	}
 }
 
-func TestCanonical(t *testing.T) {
-	cases := map[string]string{
-		"run-tests":       "run-tests",
-		"run-tests.md":    "run-tests",
-		"cut-release.txt": "cut-release",
-		"notes.go":        "notes.go",
-		"  x.md  ":        "x",
+func TestParse(t *testing.T) {
+	meta, body := parse("---\nname: foo\ndescription: \"quoted desc\"\n---\nthe body\n")
+	if meta["name"] != "foo" {
+		t.Errorf("name = %q", meta["name"])
 	}
-	for in, want := range cases {
-		if got := Canonical(in); got != want {
-			t.Errorf("Canonical(%q) = %q, want %q", in, got, want)
-		}
+	if meta["description"] != "quoted desc" {
+		t.Errorf("description = %q", meta["description"])
+	}
+	if body != "the body\n" {
+		t.Errorf("body = %q", body)
+	}
+
+	if m, b := parse("no frontmatter\nbody"); m != nil || b != "no frontmatter\nbody" {
+		t.Errorf("parse(no frontmatter) = %v, %q", m, b)
+	}
+
+	if m, b := parse("---\nname: foo\nunterminated body"); m != nil || b != "---\nname: foo\nunterminated body" {
+		t.Errorf("parse(unterminated) = %v, %q", m, b)
 	}
 }
 

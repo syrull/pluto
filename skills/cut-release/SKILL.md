@@ -1,3 +1,7 @@
+---
+name: cut-release
+description: How Pluto releases work — pushing to main auto-bumps the patch version and publishes a tagged GitHub release; use [skip release] to hold back. Use when releasing or intentionally skipping a release.
+---
 # Cut a release
 
 Releases are automatic — there is no manual tag step.

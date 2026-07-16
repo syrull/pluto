@@ -1,3 +1,7 @@
+---
+name: add-a-tool
+description: How to add a new tool to Pluto — implement the tool.Tool interface, build its args schema, register it in main.go, ship debug instrumentation, and add tests. Use when creating or wiring up a new agent tool.
+---
 # Add a new tool
 
 A tool is a type implementing `tool.Tool` (`internal/tool/tool.go`):
