@@ -112,17 +112,23 @@ func main() {
 	systemPrompt := buildSystemPrompt(reg)
 	logConfig(provider, gate)
 
+	// One summarizer, shared by the agents (context compaction) and the TUI
+	// (agent auto-labeling); nil when it can't authenticate.
+	summarizer := buildSummarizer()
+
 	// newAgent builds a fresh agent for each workspace: same provider, tools, gate,
-	// and system prompt, but an independent transcript so agents run in parallel.
+	// system prompt, and summarizer, but an independent transcript so agents run in
+	// parallel.
 	newAgent := func() *agent.Agent {
 		return agent.New(provider, reg, systemPrompt,
 			agent.WithGate(gate),
 			agent.WithContextLimit(contextLimit()),
+			agent.WithSummarizer(summarizer),
 		)
 	}
 	ag := newAgent()
 	debug.Info("lifecycle", "starting TUI")
-	if _, err := tui.New(ag, newAgent, buildSummarizer(), buildLoginHook(ag)).Run(); err != nil {
+	if _, err := tui.New(ag, newAgent, summarizer, buildLoginHook(ag)).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
@@ -188,9 +194,10 @@ func redactedEnv(key string) string {
 	return "<unset>"
 }
 
-// buildSummarizer returns a cheap one-shot summarizer (used to auto-label agents)
-// backed by the judge model, or nil when it can't authenticate so the TUI falls
-// back to deriving labels from the first message.
+// buildSummarizer returns a cheap one-shot summarizer backed by the judge model,
+// shared by context compaction (summarizing evicted exchanges) and TUI agent
+// auto-labeling, or nil when it can't authenticate — callers fall back to plain
+// eviction and first-message labels respectively.
 func buildSummarizer() func(context.Context, string) (string, error) {
 	p, err := anthropic.New(judgeModel())
 	if err != nil {
