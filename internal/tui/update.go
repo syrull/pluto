@@ -452,6 +452,21 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		ks := msg.String()
 		m.notice = ""
+		// A pending judge-error approval is modal: it captures y/a/n (and esc ⇒ no)
+		// and swallows everything else until the human answers.
+		if m.approval != nil {
+			switch ks {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "y":
+				return m, m.answerApproval(agent.ApprovalYes)
+			case "a":
+				return m, m.answerApproval(agent.ApprovalPattern)
+			case "n", "esc":
+				return m, m.answerApproval(agent.ApprovalNo)
+			}
+			return m, nil
+		}
 		if m.ghm != nil {
 			if ks == "ctrl+c" {
 				return m, tea.Quit
@@ -717,6 +732,19 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ws.unread = true
 			return m, listen(msg.id, ws.events)
 		}
+
+	case approvalReqMsg:
+		// The requesting agent goroutine is blocked in Approve until the user
+		// answers; render the prompt and wait. The listener is re-armed only after
+		// the decision (answerApproval), so queued requests are handled one at a time.
+		m.approval = msg.req
+		cmd, intent, why := approvalArgs(msg.req.call)
+		debug.Info(dbgTUI, "approval prompt shown",
+			"cmd", truncCells(oneLine(cmd), 200), "intent", truncCells(oneLine(intent), 120),
+			"why", truncCells(oneLine(why), 120), "pattern", truncCells(msg.req.rr.Pattern, 200),
+			"reason", msg.req.rr.Reason)
+		m.syncViewport()
+		return m, nil
 
 	case bashInlineMsg:
 		// Drop a result from a canceled or superseded inline run.

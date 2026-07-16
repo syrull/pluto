@@ -57,11 +57,18 @@ type Gate interface {
 // ReviewResult is a Gate's decision about a proposed tool call.
 type ReviewResult struct {
 	Allowed bool
+	// NeedsApproval marks a decision the gate wants a human to make (the judge
+	// errored). With an Approver wired the agent blocks on the user's choice;
+	// without one it falls back to Allowed (the OnJudgeError policy).
+	NeedsApproval bool
 	// Source names the deciding layer: "fast-path", "guard", "guard-only",
-	// "judge", "judge-error", or "off".
+	// "judge", "judge-error", "allowlist", "approved", "denied", or "off".
 	Source string
 	Risk   string
 	Reason string
+	// Pattern is the session-allowlist entry a human's "allow this pattern" choice
+	// would remember, computed by the gate so it can match future commands.
+	Pattern string
 }
 
 // AutoController is an optional capability a Gate exposes for runtime control.
@@ -69,6 +76,38 @@ type AutoController interface {
 	AutoEnabled() bool
 	SetAutoEnabled(on bool)
 	JudgeName() string
+}
+
+// ApprovalChoice is a human's answer to a needs-approval prompt.
+type ApprovalChoice int
+
+const (
+	// ApprovalNo blocks the command (reported back like a gate refusal).
+	ApprovalNo ApprovalChoice = iota
+	// ApprovalYes runs the command once.
+	ApprovalYes
+	// ApprovalPattern runs the command and remembers its pattern for the session.
+	ApprovalPattern
+)
+
+// ApprovalDecision is a human's answer plus, for ApprovalPattern, the pattern to
+// remember on the gate's session allowlist.
+type ApprovalDecision struct {
+	Choice  ApprovalChoice
+	Pattern string
+}
+
+// Approver resolves a review the gate flagged NeedsApproval, blocking until the
+// user chooses. It is consulted only for the judge-error branch; guard denylist
+// hits and explicit judge blocks never reach it.
+type Approver interface {
+	Approve(ctx context.Context, call llm.ToolCall, rr ReviewResult) (ApprovalDecision, error)
+}
+
+// Allowlister is an optional Gate capability: remember a pattern so matching
+// commands skip approval for the rest of the session.
+type Allowlister interface {
+	Allow(pattern string)
 }
 
 // Option configures an Agent at construction.
@@ -79,6 +118,17 @@ func WithGate(g Gate) Option {
 	return func(a *Agent) {
 		if g != nil {
 			a.gate = g
+		}
+	}
+}
+
+// WithApprover installs the human-in-the-loop approver consulted when a review is
+// flagged NeedsApproval (a judge outage). A nil approver leaves the agent in its
+// non-interactive fallback (the OnJudgeError policy). A nil approver is ignored.
+func WithApprover(ap Approver) Option {
+	return func(a *Agent) {
+		if ap != nil {
+			a.approver = ap
 		}
 	}
 }
@@ -117,6 +167,7 @@ type Agent struct {
 	transcript   []llm.Message
 	lastUsage    llm.Usage // token accounting from the most recent turn
 	gate         Gate      // optional pre-execution review; nil ⇒ allow-all
+	approver     Approver  // optional human-in-the-loop for needs-approval reviews; nil ⇒ fall back to policy
 	contextLimit int       // token budget for the re-sent transcript; 0 ⇒ derive from window
 	learnMode    bool      // when true, learnOverlay is appended to the system message
 	// summarize compacts evicted exchanges into a memory turn; nil ⇒ plain eviction.
@@ -401,7 +452,13 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 			}
 			if a.gate != nil {
 				rr := a.gate.Review(ctx, call)
-				debug.Debug("tool", "gate review", "tool", call.Name, "allowed", rr.Allowed, "source", rr.Source, "risk", rr.Risk)
+				debug.Debug("tool", "gate review", "tool", call.Name, "allowed", rr.Allowed, "source", rr.Source, "risk", rr.Risk, "needs_approval", rr.NeedsApproval)
+				// A judge outage escalates to a human when an approver is wired;
+				// resolve it before rendering the review line so the line reflects
+				// the final decision, not the pending one.
+				if rr.NeedsApproval {
+					rr = a.resolveApproval(ctx, call, rr)
+				}
 				if call.Name == "bash" && rr.Source != "off" {
 					emit(Event{Kind: "tool_review", Tool: call.Name, Text: reviewLine(rr)})
 				}
@@ -451,6 +508,59 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 	emit(Event{Kind: "error", Text: err.Error()})
 	runTimer.Stop("outcome", "step-budget-exhausted", "steps", maxSteps)
 	return "", err
+}
+
+// resolveApproval turns a needs-approval review into a concrete allow/block.
+// With an interactive approver it blocks on the user's choice (yes / allow this
+// pattern / no); without one — a headless or background agent — it falls back to
+// the review's non-interactive decision (the OnJudgeError policy). On "allow this
+// pattern" it records a session-allowlist entry via the gate so matching commands
+// skip approval for the rest of the session.
+func (a *Agent) resolveApproval(ctx context.Context, call llm.ToolCall, rr ReviewResult) ReviewResult {
+	if a.approver == nil {
+		debug.Info("policy", "judge error fallback (no approver)", "tool", call.Name,
+			"allowed", rr.Allowed, "reason", rr.Reason)
+		return rr
+	}
+	debug.Info("policy", "judge error escalated to human approval", "tool", call.Name,
+		"pattern", truncate(rr.Pattern, 200), "reason", rr.Reason)
+	timer := debug.NewTimer("policy", "approval wait")
+	dec, err := a.approver.Approve(ctx, call, rr)
+	if err != nil {
+		// A canceled run must never fall through to "allowed"; otherwise honor the
+		// non-interactive fallback so a flaky approver doesn't stall the agent.
+		if ctx.Err() != nil {
+			timer.Stop("outcome", "canceled")
+			debug.Info("policy", "approval canceled — blocking", "tool", call.Name)
+			rr.Allowed, rr.NeedsApproval, rr.Source = false, false, "judge-error"
+			return rr
+		}
+		timer.Stop("outcome", "error", "err", err)
+		debug.Warn("policy", "approval failed — falling back to policy", "tool", call.Name,
+			"err", err, "allowed", rr.Allowed)
+		rr.NeedsApproval = false
+		return rr
+	}
+	rr.NeedsApproval = false
+	switch dec.Choice {
+	case ApprovalYes:
+		timer.Stop("outcome", "yes")
+		debug.Info("policy", "command approved by user", "tool", call.Name, "scope", "once")
+		rr.Allowed, rr.Source, rr.Reason = true, "approved", "approved by user"
+	case ApprovalPattern:
+		timer.Stop("outcome", "allow-pattern", "pattern", truncate(dec.Pattern, 200))
+		debug.Info("policy", "command approved by user", "tool", call.Name, "scope", "pattern",
+			"pattern", truncate(dec.Pattern, 200))
+		rr.Allowed, rr.Source, rr.Reason = true, "approved", "approved by user (pattern allowlisted)"
+		if al, ok := a.gate.(Allowlister); ok && strings.TrimSpace(dec.Pattern) != "" {
+			al.Allow(dec.Pattern)
+		}
+	default: // ApprovalNo
+		timer.Stop("outcome", "no")
+		debug.Info("policy", "command denied by user", "tool", call.Name)
+		rr.Allowed, rr.Source, rr.Reason = false, "denied", "blocked by user"
+	}
+	return rr
 }
 
 // recordCanceled appends a synthetic "canceled" tool_result for each call so a

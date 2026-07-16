@@ -59,6 +59,35 @@ from an empty buffer) and `ctrl+n` walks forward, clearing the buffer once you s
 past the newest entry. On a multi-line draft, `ctrl+p`/`ctrl+n` fall through to the
 editor and move the cursor between lines, so they never clobber an unsent draft.
 
+## Command review (auto mode)
+
+Before running a `bash` command, pluto reviews it: an offline **guard** denylist
+blocks catastrophic commands outright, and an LLM **judge** assesses the rest.
+Trivially safe read-only commands take a fast path and skip the judge. Toggle the
+whole thing with `/auto on|off`.
+
+When the **judge itself fails** (provider unreachable, timeout, unparseable
+verdict), pluto no longer silently guesses from config. Instead it pauses the
+command and asks you:
+
+```
+⚠ judge unavailable — approve this command?
+[y] yes   ·   [a] allow this pattern   ·   [n] no
+```
+
+- **`y` — yes**: run it once.
+- **`a` — allow this pattern**: run it now and remember an allowlist entry so
+  matching commands skip approval for the rest of the session. The remembered
+  pattern generalizes to `program subcommand` for common dev tools (e.g.
+  `go test`, `git status`) and is otherwise the exact command, so it can't
+  over-match. Guard denylist hits are always blocked, even if allowlisted.
+- **`n` — no** (or `esc`): block it, reported back to the model like any refusal.
+
+Only a *judge error* triggers the prompt — a guard block or an explicit judge
+`block` is never downgradable by a human. When no interactive prompt is available
+(a background or headless run), pluto falls back to the non-interactive policy set
+by `PLUTO_AUTO_ON_JUDGE_ERR` (`block` by default, `allow` to fail open).
+
 ## Debugging
 
 Pluto can record a structured, timestamped log of *everything* that happens in a

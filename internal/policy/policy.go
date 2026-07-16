@@ -41,12 +41,14 @@ type Config struct {
 type ReviewGate struct {
 	mu    sync.RWMutex
 	cfg   Config
-	judge judge.Judge // may be nil (guard-only review)
+	judge judge.Judge     // may be nil (guard-only review)
+	allow map[string]bool // session allowlist of human-approved patterns
 }
 
 var (
 	_ agent.Gate           = (*ReviewGate)(nil)
 	_ agent.AutoController = (*ReviewGate)(nil)
+	_ agent.Allowlister    = (*ReviewGate)(nil)
 )
 
 // NewReviewGate builds a gate from cfg and an optional judge (nil ⇒ guard-only).
@@ -90,6 +92,15 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 		return agent.ReviewResult{Allowed: true, Source: "guard-only"}
 	}
 
+	// A pattern a human approved earlier this session skips the judge entirely so a
+	// transient judge outage doesn't re-prompt for the same class of command. Guard
+	// already ran above, so a catastrophic command can never reach the allowlist.
+	pattern := allowPattern(cmd)
+	if pattern != "" && g.allowed(pattern) {
+		debug.Info("policy", "allowlist match", "pattern", truncate(pattern, 200), "cmd", truncate(cmd, 200))
+		return agent.ReviewResult{Allowed: true, Source: "allowlist"}
+	}
+
 	// The agent's actual working directory (its worktree) rides in on the context;
 	// fall back to the process cwd only when none was threaded through. Passing the
 	// real dir keeps a worktree-scoped command from reading as out-of-scope.
@@ -101,13 +112,21 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 	timer := debug.NewTimer("policy", "judge verdict")
 	verdict, err := j.Assess(ctx, judge.Request{Command: cmd, Intent: intent, Why: why, Cwd: dir})
 	if err != nil {
+		// Defer to a human when one can answer; the agent falls back to the
+		// non-interactive OnJudgeError decision (carried in Allowed) when no
+		// approver is wired (headless or background agent).
 		allowed := cfg.OnJudgeError == judge.DecisionAllow
-		reason := "judge unavailable — allowed by policy"
-		if !allowed {
-			reason = "judge unavailable — blocked by fail-safe policy"
+		reason := "judge unavailable — approve to run"
+		timer.Stop("outcome", "error", "fallback_allowed", allowed, "err", err)
+		debug.Warn("policy", "judge error → needs approval", "cmd", truncate(cmd, 200),
+			"pattern", truncate(pattern, 200), "fallback_allowed", allowed)
+		return agent.ReviewResult{
+			Allowed:       allowed,
+			NeedsApproval: true,
+			Source:        "judge-error",
+			Reason:        reason,
+			Pattern:       pattern,
 		}
-		timer.Stop("outcome", "error", "allowed", allowed, "err", err)
-		return agent.ReviewResult{Allowed: allowed, Source: "judge-error", Reason: reason}
 	}
 	timer.Stop("decision", string(verdict.Decision), "risk", verdict.Risk)
 	return agent.ReviewResult{
@@ -116,6 +135,65 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 		Risk:    verdict.Risk,
 		Reason:  verdict.Reason,
 	}
+}
+
+// Allow implements agent.Allowlister: it records a human-approved pattern on the
+// session allowlist so matching commands skip approval for the rest of the run.
+func (g *ReviewGate) Allow(pattern string) {
+	p := strings.TrimSpace(pattern)
+	if p == "" {
+		return
+	}
+	g.mu.Lock()
+	if g.allow == nil {
+		g.allow = make(map[string]bool)
+	}
+	already := g.allow[p]
+	g.allow[p] = true
+	n := len(g.allow)
+	g.mu.Unlock()
+	if !already {
+		debug.Info("policy", "allowlist add", "pattern", truncate(p, 200), "entries", n)
+	}
+}
+
+// allowed reports whether pattern is on the session allowlist.
+func (g *ReviewGate) allowed(pattern string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.allow[pattern]
+}
+
+// subcommandTools are programs whose first argument is a subcommand, so an
+// "allow this pattern" entry generalizes to "program subcommand" (e.g. "git
+// status", "go test") rather than the exact command line. Everything else is
+// remembered verbatim so a pattern can never over-match into a different command.
+var subcommandTools = map[string]bool{
+	"git": true, "go": true, "make": true, "cargo": true,
+	"npm": true, "pnpm": true, "yarn": true, "bun": true, "node": true,
+	"deno": true, "pip": true, "pip3": true, "python": true, "python3": true,
+	"docker": true, "kubectl": true, "terraform": true, "gradle": true, "mvn": true,
+}
+
+// allowPattern derives the session-allowlist entry for cmd. The rule is
+// deliberately conservative so "allow this pattern" can't wave through a
+// different command: a command with shell metacharacters, or one whose first
+// argument is a flag/operand, is remembered verbatim (whitespace-collapsed);
+// only a recognized subcommand tool generalizes to "program subcommand". It
+// returns "" for a blank command.
+func allowPattern(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	norm := strings.Join(fields, " ")
+	if strings.ContainsAny(norm, "|&;<>()$`\"'*?[]{}\\!#~") {
+		return norm
+	}
+	if subcommandTools[fields[0]] && len(fields) >= 2 && !strings.HasPrefix(fields[1], "-") {
+		return fields[0] + " " + fields[1]
+	}
+	return norm
 }
 
 // truncate bounds a command string for a log field.

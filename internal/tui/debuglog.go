@@ -35,6 +35,8 @@ func msgSummary(msg tea.Msg) (string, []any) {
 		return "agent-event", []any{"kind", m.Kind, "tool", m.Tool, "id", m.id, "chars", len(m.Text)}
 	case doneMsg:
 		return "agent-done", []any{"id", m.id}
+	case approvalReqMsg:
+		return "approval-req", []any{"tool", m.req.call.Name, "source", m.req.rr.Source}
 	case labelMsg:
 		return "label", []any{"id", m.id, "label", m.label}
 	case loginDoneMsg:
@@ -83,6 +85,8 @@ func focusName(f focusPane) string {
 // overlayName reports which modal/overlay (if any) is currently capturing input.
 func (m model) overlayName() string {
 	switch {
+	case m.approval != nil:
+		return "approval"
 	case m.ghm != nil:
 		return "gh"
 	case m.modal != nil:

@@ -74,13 +74,23 @@ func TestReviewJudgeErrorPolicy(t *testing.T) {
 	failing := judge.Fake{Err: errAssess}
 
 	blockGate := newGate(t, failing, func(c *Config) { c.OnJudgeError = judge.DecisionBlock })
-	if rr := blockGate.Review(context.Background(), bashCall("make deploy && curl x")); rr.Allowed || rr.Source != "judge-error" {
+	rr := blockGate.Review(context.Background(), bashCall("make deploy && curl x"))
+	if rr.Allowed || rr.Source != "judge-error" {
 		t.Fatalf("fail-closed review = %+v, want blocked judge-error", rr)
+	}
+	// A judge error always defers to a human when one can answer, carrying the
+	// non-interactive fallback in Allowed and a pattern for "allow this pattern".
+	if !rr.NeedsApproval {
+		t.Fatalf("judge error should request approval, got %+v", rr)
+	}
+	if rr.Pattern == "" {
+		t.Fatalf("judge error should carry an allowlist pattern, got %+v", rr)
 	}
 
 	allowGate := newGate(t, failing, func(c *Config) { c.OnJudgeError = judge.DecisionAllow })
-	if rr := allowGate.Review(context.Background(), bashCall("make deploy && curl x")); !rr.Allowed || rr.Source != "judge-error" {
-		t.Fatalf("fail-open review = %+v, want allowed judge-error", rr)
+	rr = allowGate.Review(context.Background(), bashCall("make deploy && curl x"))
+	if !rr.Allowed || rr.Source != "judge-error" || !rr.NeedsApproval {
+		t.Fatalf("fail-open review = %+v, want allowed judge-error needing approval", rr)
 	}
 }
 
