@@ -5,7 +5,34 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/syrull/pluto/internal/debug"
 )
+
+// captureDebug enables the debug logger scoped to the "tool" component (the tag
+// the skills package logs under) and returns a reader for the captured output.
+func captureDebug(t *testing.T) func() string {
+	t.Helper()
+	_ = debug.Close()
+	path := filepath.Join(t.TempDir(), "pluto-debug.log")
+	t.Setenv("PLUTO_DEBUG", "1")
+	t.Setenv("PLUTO_DEBUG_FILE", path)
+	t.Setenv("PLUTO_DEBUG_LEVEL", "debug")
+	t.Setenv("PLUTO_DEBUG_COMPONENTS", "tool")
+	t.Setenv("PLUTO_DEBUG_FRAMES", "")
+	if _, err := debug.Init(); err != nil {
+		t.Fatalf("debug.Init: %v", err)
+	}
+	t.Cleanup(func() { _ = debug.Close() })
+	return func() string {
+		_ = debug.Close()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read log: %v", err)
+		}
+		return string(data)
+	}
+}
 
 func seed(t *testing.T, dir, name, content string) {
 	t.Helper()
@@ -131,6 +158,68 @@ func TestLoadRejectsUnsafeName(t *testing.T) {
 	for _, name := range []string{"../secret", "sub/secret", `..\secret`} {
 		if _, err := Load(dir, name); err == nil || !strings.Contains(err.Error(), "invalid") {
 			t.Fatalf("Load(%q) error = %v, want invalid", name, err)
+		}
+	}
+}
+
+func TestListDedupesByExtensionPreference(t *testing.T) {
+	dir := t.TempDir()
+	seed(t, dir, "foo.md", "From markdown\nmd body\n")
+	seed(t, dir, "foo.txt", "From text\ntxt body\n")
+
+	list := List(dir)
+	if len(list) != 1 {
+		t.Fatalf("List() len = %d, want 1 (deduped): %+v", len(list), list)
+	}
+	if list[0].Name != "foo" || list[0].Summary != "From markdown" {
+		t.Fatalf("List() kept wrong file, want the .md: %+v", list[0])
+	}
+	body, err := Load(dir, "foo")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !strings.Contains(body, "md body") {
+		t.Fatalf("Load() = %q, want the preferred .md body", body)
+	}
+}
+
+func TestListMissingDirIsSilent(t *testing.T) {
+	read := captureDebug(t)
+	if got := List(filepath.Join(t.TempDir(), "nope")); got != nil {
+		t.Fatalf("List(missing) = %v, want nil", got)
+	}
+	if out := read(); strings.Contains(out, "unreadable") {
+		t.Fatalf("missing dir must not warn:\n%s", out)
+	}
+}
+
+func TestListWarnsOnUnreadableDir(t *testing.T) {
+	read := captureDebug(t)
+	// A regular file where a directory is expected makes ReadDir fail with a
+	// non-not-exist error, which must be surfaced instead of silently skipped.
+	notDir := filepath.Join(t.TempDir(), "skills")
+	if err := os.WriteFile(notDir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := List(notDir); got != nil {
+		t.Fatalf("List(non-dir) = %v, want nil", got)
+	}
+	if out := read(); !strings.Contains(out, "skills dir unreadable") {
+		t.Fatalf("unreadable dir not logged:\n%s", out)
+	}
+}
+
+func TestCanonical(t *testing.T) {
+	cases := map[string]string{
+		"run-tests":       "run-tests",
+		"run-tests.md":    "run-tests",
+		"cut-release.txt": "cut-release",
+		"notes.go":        "notes.go",
+		"  x.md  ":        "x",
+	}
+	for in, want := range cases {
+		if got := Canonical(in); got != want {
+			t.Errorf("Canonical(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

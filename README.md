@@ -92,7 +92,7 @@ by `PLUTO_AUTO_ON_JUDGE_ERR` (`block` by default, `allow` to fail open).
 
 Skills are short, single-topic playbooks the agent pulls into context only when
 a task needs them, so the base system prompt stays small. Drop plain-text files
-in a `skills/` directory at your repository root:
+in a `skills/` directory where you run pluto (typically your repository root):
 
 ```
 skills/

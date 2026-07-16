@@ -57,17 +57,18 @@ func (Skill) Execute(ctx context.Context, args json.RawMessage) (string, error) 
 		return "Available skills (load one by name):\n" + skills.Render(list), nil
 	}
 
+	canonical := skills.Canonical(name)
 	timer := debug.NewTimer("tool", "skill load")
 	body, err := skills.Load(dir, name)
 	if err != nil {
-		timer.Stop("dir", dir, "name", name, "outcome", "error")
-		debug.Warn("tool", "skill load failed", "name", name, "err", err)
+		timer.Stop("dir", dir, "name", canonical, "outcome", "error")
+		debug.Warn("tool", "skill load failed", "name", canonical, "err", err)
 		if list := skills.List(dir); len(list) > 0 {
 			return "", fmt.Errorf("%w; available skills:\n%s", err, skills.Render(list))
 		}
 		return "", err
 	}
-	timer.Stop("dir", dir, "name", name, "outcome", "ok", "chars", len(body))
-	debug.Info("tool", "skill loaded", "name", name, "chars", len(body))
-	return fmt.Sprintf("--- skill: %s ---\n%s", name, body), nil
+	timer.Stop("dir", dir, "name", canonical, "outcome", "ok", "chars", len(body))
+	debug.Info("tool", "skill loaded", "name", canonical, "chars", len(body))
+	return fmt.Sprintf("--- skill: %s ---\n%s", canonical, body), nil
 }

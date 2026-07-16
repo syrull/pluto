@@ -6,11 +6,14 @@ package skills
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/syrull/pluto/internal/debug"
 )
 
 // DirName is the conventional directory, relative to the working directory,
@@ -38,9 +41,15 @@ type Skill struct {
 func List(dir string) []Skill {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			debug.Warn("tool", "skills dir unreadable", "dir", dir, "err", err)
+		}
 		return nil
 	}
-	var out []Skill
+	// Dedupe by name: when the same basename exists with several allowed
+	// extensions, keep the one Load would resolve (earliest in exts) so the index
+	// never advertises an entry whose body can't be loaded by that name.
+	seen := make(map[string]ranked)
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -49,18 +58,44 @@ func List(dir string) []Skill {
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(name))
-		if !allowedExt(ext) {
+		rank := extRank(strings.ToLower(filepath.Ext(name)))
+		if rank < 0 {
 			continue
 		}
 		summary := readSummary(filepath.Join(dir, name))
 		if summary == "" {
 			continue
 		}
-		out = append(out, Skill{Name: strings.TrimSuffix(name, filepath.Ext(name)), Summary: summary})
+		base := strings.TrimSuffix(name, filepath.Ext(name))
+		cur := ranked{Skill{Name: base, Summary: summary}, rank}
+		if prev, ok := seen[base]; ok {
+			keep, drop := cur, prev
+			if prev.rank <= cur.rank {
+				keep, drop = prev, cur
+			}
+			debug.Debug("tool", "duplicate skill name; kept higher-preference file",
+				"name", base, "kept", exts[keep.rank], "dropped", exts[drop.rank])
+			seen[base] = keep
+			continue
+		}
+		seen[base] = cur
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]Skill, 0, len(seen))
+	for _, r := range seen {
+		out = append(out, r.skill)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// ranked pairs a discovered skill with its extension preference rank (its index
+// in exts) so List resolves same-name collisions the way Load does.
+type ranked struct {
+	skill Skill
+	rank  int
 }
 
 // Load returns the full text of the named skill under dir. name may be given
@@ -74,13 +109,14 @@ func Load(dir, name string) (string, error) {
 	if !safeName(name) {
 		return "", fmt.Errorf("skills: invalid skill name %q", name)
 	}
-	base := name
-	if allowedExt(strings.ToLower(filepath.Ext(base))) {
-		base = strings.TrimSuffix(base, filepath.Ext(base))
-	}
+	base := Canonical(name)
 	for _, ext := range exts {
-		data, err := os.ReadFile(filepath.Join(dir, base+ext))
+		path := filepath.Join(dir, base+ext)
+		data, err := os.ReadFile(path)
 		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				debug.Warn("tool", "skill file unreadable", "path", path, "err", err)
+			}
 			continue
 		}
 		body := strings.TrimSpace(string(data))
@@ -90,6 +126,16 @@ func Load(dir, name string) (string, error) {
 		return body, nil
 	}
 	return "", fmt.Errorf("skills: skill %q not found", base)
+}
+
+// Canonical strips a trailing known skill extension from name, mirroring how Load
+// resolves a file, so callers can display the same name shown in the index.
+func Canonical(name string) string {
+	name = strings.TrimSpace(name)
+	if allowedExt(strings.ToLower(filepath.Ext(name))) {
+		return strings.TrimSuffix(name, filepath.Ext(name))
+	}
+	return name
 }
 
 // Render formats skills as compact "- name: summary" lines for the always-on
@@ -109,13 +155,17 @@ func Render(list []Skill) string {
 }
 
 // allowedExt reports whether ext (lowercased, dot-prefixed) is a skill file type.
-func allowedExt(ext string) bool {
-	for _, e := range exts {
+func allowedExt(ext string) bool { return extRank(ext) >= 0 }
+
+// extRank returns ext's index in exts (its Load preference), or -1 when ext is
+// not a skill file type.
+func extRank(ext string) int {
+	for i, e := range exts {
 		if ext == e {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
 // safeName rejects names that could escape the skills directory.
@@ -131,6 +181,7 @@ func safeName(name string) bool {
 func readSummary(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
+		debug.Warn("tool", "skill file unreadable", "path", path, "err", err)
 		return ""
 	}
 	defer f.Close()
