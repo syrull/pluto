@@ -148,6 +148,9 @@ func (m *model) resume(id string) tea.Cmd {
 		a := agents[active]
 		m.agent.Load(a.Messages)
 		m.rebuildFromMessages(a.Messages)
+		m.history = historyFromMessages(a.Messages)
+		m.histPos = len(m.history)
+		debug.Debug(dbgTUI, "resume recall history", "mode", "single", "entries", len(m.history))
 		if w := m.workspaceAt(m.active); w != nil {
 			if a.Cwd != "" {
 				w.cwd = a.Cwd
@@ -176,6 +179,7 @@ func (m *model) restoreAgents(agents []session.Agent, active int) {
 	for _, a := range agents {
 		ag := m.newAgent()
 		ag.Load(a.Messages)
+		hist := historyFromMessages(a.Messages)
 		wss = append(wss, &workspace{
 			id:       m.nextID,
 			cwd:      a.Cwd,
@@ -184,7 +188,10 @@ func (m *model) restoreAgents(agents []session.Agent, active int) {
 			labeled:  strings.TrimSpace(a.Label) != "",
 			agent:    ag,
 			showHome: !hasConversation(a.Messages),
+			history:  hist,
+			histPos:  len(hist),
 		})
+		debug.Debug(dbgTUI, "resume recall history", "mode", "agent", "id", m.nextID, "entries", len(hist))
 		m.nextID++
 	}
 	m.workspaces = wss
@@ -284,6 +291,27 @@ func (m *model) rebuildFromMessages(msgs []llm.Message) {
 			m.appendToolResult(agent.Event{Kind: "tool_result", Tool: msg.ToolName, Text: msg.Content})
 		}
 	}
+}
+
+// historyFromMessages rebuilds the input recall ring from a transcript's user
+// turns so ctrl+p/ctrl+n walk back through them after a resume, matching
+// recordHistory's rules: blanks are skipped and consecutive duplicates collapse.
+func historyFromMessages(msgs []llm.Message) []string {
+	var hist []string
+	for _, msg := range msgs {
+		if msg.Role != llm.RoleUser {
+			continue
+		}
+		in := strings.TrimSpace(msg.Content)
+		if in == "" {
+			continue
+		}
+		if n := len(hist); n > 0 && hist[n-1] == in {
+			continue
+		}
+		hist = append(hist, in)
+	}
+	return hist
 }
 
 // hasConversation reports whether msgs hold anything beyond the system prompt.

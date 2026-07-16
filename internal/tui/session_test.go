@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,6 +64,103 @@ func TestSaveThenResumeReconstructsTranscript(t *testing.T) {
 	}
 	if m2.sessionName != "mywork" {
 		t.Fatalf("sessionName = %q, want mywork", m2.sessionName)
+	}
+}
+
+func TestHistoryFromMessages(t *testing.T) {
+	got := historyFromMessages([]llm.Message{
+		{Role: llm.RoleSystem, Content: "system prompt"},
+		{Role: llm.RoleUser, Content: "first ask"},
+		{Role: llm.RoleModel, Content: "an answer"},
+		{Role: llm.RoleTool, ToolName: "read", Content: "file body"},
+		{Role: llm.RoleUser, Content: "  second ask  "}, // trimmed
+		{Role: llm.RoleUser, Content: "second ask"},     // consecutive dup collapses
+		{Role: llm.RoleUser, Content: "   "},            // blank skipped
+		{Role: llm.RoleUser, Content: "third ask"},
+	})
+	want := []string{"first ask", "second ask", "third ask"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("historyFromMessages = %v, want %v", got, want)
+	}
+}
+
+func TestResumeRestoresRecallHistory(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+
+	convo := []llm.Message{
+		{Role: llm.RoleUser, Content: "list the files"},
+		{Role: llm.RoleModel, Content: "here they are"},
+		{Role: llm.RoleUser, Content: "now open main.go"},
+		{Role: llm.RoleModel, Content: "opened"},
+	}
+	m := &model{agent: seededAgent(convo), md: newRenderer(80), width: 80}
+	if status, _ := m.handleCommand("/save recallwork"); status != "" {
+		t.Fatalf("/save failed: %q", status)
+	}
+
+	m2 := &model{agent: seededAgent(nil), md: newRenderer(80), input: newInput(80), width: 80}
+	m2.resume("recallwork")
+
+	want := []string{"list the files", "now open main.go"}
+	if !slices.Equal(m2.history, want) {
+		t.Fatalf("resumed recall history = %v, want %v", m2.history, want)
+	}
+	if m2.histPos != len(m2.history) {
+		t.Fatalf("resumed histPos = %d, want %d (not navigating)", m2.histPos, len(m2.history))
+	}
+
+	// ctrl+p/ctrl+n now walk the resumed conversation's user turns.
+	var tm tea.Model = *m2
+	tm = pressCtrl(tm, 'p')
+	if got := tm.(model).input.Value(); got != "now open main.go" {
+		t.Fatalf("ctrl+p after resume = %q, want the last user turn", got)
+	}
+	tm = pressCtrl(tm, 'p')
+	if got := tm.(model).input.Value(); got != "list the files" {
+		t.Fatalf("second ctrl+p after resume = %q, want the first user turn", got)
+	}
+}
+
+func TestResumeMultiAgentRestoresPerAgentHistory(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+
+	m := multiModel(2)
+	m.workspaces[0].agent.Load([]llm.Message{{Role: llm.RoleUser, Content: "agent zero ask"}})
+	m.workspaces[1].agent.Load([]llm.Message{{Role: llm.RoleUser, Content: "agent one ask"}})
+	if s := m.save(""); s != "" {
+		t.Fatalf("save failed: %s", s)
+	}
+
+	m2 := multiModel(1)
+	m2.resume(m.sessionName)
+
+	if len(m2.workspaces) != 2 {
+		t.Fatalf("resume should restore 2 workspaces, got %d", len(m2.workspaces))
+	}
+	if got := m2.workspaces[0].history; !slices.Equal(got, []string{"agent zero ask"}) {
+		t.Fatalf("agent 0 recall history = %v, want [agent zero ask]", got)
+	}
+	if got := m2.workspaces[1].history; !slices.Equal(got, []string{"agent one ask"}) {
+		t.Fatalf("agent 1 recall history = %v, want [agent one ask]", got)
+	}
+	// The active workspace's history is live on the model for ctrl+p.
+	if got := m2.history; !slices.Equal(got, m2.workspaces[m2.active].history) {
+		t.Fatalf("active model history = %v, want the active workspace's %v", got, m2.workspaces[m2.active].history)
+	}
+}
+
+func TestResumeRecallHistoryDebugLog(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+	read := enableTUILog(t, "debug")
+
+	m := &model{agent: seededAgent([]llm.Message{{Role: llm.RoleUser, Content: "remember this"}}), md: newRenderer(80), width: 80}
+	m.handleCommand("/save logged")
+
+	m2 := &model{agent: seededAgent(nil), md: newRenderer(80), input: newInput(80), width: 80}
+	m2.resume("logged")
+
+	if out := read(); !strings.Contains(out, "resume recall history") {
+		t.Errorf("debug log should record recall-history restoration:\n%s", out)
 	}
 }
 
