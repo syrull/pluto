@@ -193,6 +193,48 @@ func TestBuildSystemPromptIncludesRepoSnapshot(t *testing.T) {
 	}
 }
 
+// TestBuildSystemPromptIndexesSkills verifies the compact skills index (name +
+// summary) rides in the base prompt while a skill's full body is left out — the
+// body is loaded on demand via the skill tool, not front-loaded.
+func TestBuildSystemPromptIndexesSkills(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	reg := newTestRegistry(t)
+
+	skillsDir := filepath.Join(dir, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "SECRET_SKILL_BODY_LINE that must not be front-loaded"
+	content := "# Run the test suite\n\n" + body + "\n"
+	if err := os.WriteFile(filepath.Join(skillsDir, "run-tests.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt := buildSystemPrompt(reg)
+
+	if !strings.Contains(prompt, "--- Skills (load a full playbook on demand with the skill tool) ---") {
+		t.Errorf("buildSystemPrompt() missing skills index header")
+	}
+	if !strings.Contains(prompt, "- run-tests: Run the test suite") {
+		t.Errorf("buildSystemPrompt() missing compact skill entry")
+	}
+	if strings.Contains(prompt, body) {
+		t.Errorf("buildSystemPrompt() front-loaded the skill body; it must be loaded on demand")
+	}
+}
+
+// TestBuildSystemPromptNoSkillsDir verifies the index section is omitted when no
+// skills/ directory exists.
+func TestBuildSystemPromptNoSkillsDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	reg := newTestRegistry(t)
+
+	if strings.Contains(buildSystemPrompt(reg), "--- Skills") {
+		t.Errorf("buildSystemPrompt() emitted skills section with no skills/ dir")
+	}
+}
+
 // TestBuildSystemPromptSnapshotDisabled verifies PLUTO_REPO_SCAN=off suppresses
 // the snapshot entirely.
 func TestBuildSystemPromptSnapshotDisabled(t *testing.T) {
