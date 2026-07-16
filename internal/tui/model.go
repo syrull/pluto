@@ -172,6 +172,13 @@ type model struct {
 	// ghm is the open GitHub browser (issues/PRs), if any.
 	ghm *ghModal
 
+	// approver bridges an agent's blocking judge-error approval request to this UI;
+	// approval is the request currently prompting the user, if any. Both are nil in
+	// the bare/test model and for background/headless runs, which fall back to the
+	// OnJudgeError policy instead of prompting.
+	approver *Approver
+	approval *approvalRequest
+
 	// workspaces are the parallel agents. The model's per-agent fields above mirror
 	// the active workspace (workspaces[active]); background workspaces keep their
 	// own copy, kept in sync via stash/unstash. newAgent builds a fresh agent for a
@@ -312,20 +319,28 @@ func (m model) inputView() string {
 
 // New builds the Bubbletea program. a is the default (initial) agent; newAgent
 // builds a fresh agent for each spawned workspace (same provider/tools/config);
-// summarize is an optional one-shot auto-labeler (nil ⇒ derive labels locally).
-func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook) *tea.Program {
+// summarize is an optional one-shot auto-labeler (nil ⇒ derive labels locally);
+// approver is the shared human-in-the-loop hook for judge-error approvals (nil ⇒
+// no interactive approval).
+func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook, approver *Approver) *tea.Program {
 	cwd, _ := os.Getwd()
 	ws := &workspace{id: 0, cwd: cwd, agent: a, showHome: true}
 	m := model{
 		agent: a, login: login, md: newRenderer(80), input: newInput(80),
 		mouse: mouseEnabled(), showHome: true, tip: pickTip(),
 		workspaces: []*workspace{ws}, active: 0, nextID: 1,
-		newAgent: newAgent, summarize: summarize,
+		newAgent: newAgent, summarize: summarize, approver: approver,
 	}
 	return tea.NewProgram(m)
 }
 
-func (m model) Init() tea.Cmd { return tea.Batch(gatherGitCmd, orbitTick(m.orbitEpoch)) }
+func (m model) Init() tea.Cmd {
+	cmds := []tea.Cmd{gatherGitCmd, orbitTick(m.orbitEpoch)}
+	if c := listenApproval(m.approver); c != nil {
+		cmds = append(cmds, c)
+	}
+	return tea.Batch(cmds...)
+}
 
 func scrollKeymap() viewport.KeyMap {
 	return viewport.KeyMap{

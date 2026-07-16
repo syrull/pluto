@@ -116,12 +116,18 @@ func main() {
 	// (agent auto-labeling); nil when it can't authenticate.
 	summarizer, summarizerProvider := buildSummarizer()
 
+	// approver is the shared human-in-the-loop hook: when the judge errors, the
+	// gate defers to it instead of silently applying OnJudgeError. It bridges the
+	// blocking agent goroutine to the TUI prompt (see tui.Approver).
+	approver := tui.NewApprover()
+
 	// newAgent builds a fresh agent for each workspace: same provider, tools, gate,
-	// system prompt, and summarizer, but an independent transcript so agents run in
-	// parallel.
+	// approver, system prompt, and summarizer, but an independent transcript so
+	// agents run in parallel.
 	newAgent := func() *agent.Agent {
 		return agent.New(provider, reg, systemPrompt,
 			agent.WithGate(gate),
+			agent.WithApprover(approver),
 			agent.WithContextLimit(contextLimit()),
 			agent.WithSummarizer(summarizer),
 		)
@@ -133,7 +139,7 @@ func main() {
 	// re-login leaves the judge on an expired token and the fail-safe policy
 	// blocks every command for the rest of the session.
 	loginHook := buildLoginHook(ag, auxReauthers(judgeProvider, summarizerProvider)...)
-	if _, err := tui.New(ag, newAgent, summarizer, loginHook).Run(); err != nil {
+	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
