@@ -50,6 +50,15 @@ fuzzy finder, and dashboard all follow the active agent's directory. `/new`
 clears only the active agent, and agents (with their transcripts and worktrees)
 persist across restarts via `/save` and `/resume`.
 
+## Conversation pane
+
+In the chat pane, `↑`/`↓` (and `PgUp`/`PgDn`, `ctrl+u`/`ctrl+d`) always scroll the
+transcript — they never touch the input. Input **history** is recalled with
+readline-style keys instead: `ctrl+p` walks back to older submitted messages (only
+from an empty buffer) and `ctrl+n` walks forward, clearing the buffer once you step
+past the newest entry. On a multi-line draft, `ctrl+p`/`ctrl+n` fall through to the
+editor and move the cursor between lines, so they never clobber an unsent draft.
+
 ## Debugging
 
 Pluto can record a structured, timestamped log of *everything* that happens in a
