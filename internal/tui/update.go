@@ -672,10 +672,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport()
 			return m, cmd
 		default:
-			// The textarea's word-backward (alt/Command+←) infinite-loops at the
-			// start of an empty line; there's nothing to the left anyway, so no-op.
-			if slices.Contains(m.input.KeyMap.WordBackward.Keys(), ks) && m.atInputStart() {
-				debug.Trace(dbgTUI, "word jump", "dir", "back", "outcome", "at-start")
+			// The textarea's word-backward (alt/Command+←) infinite-loops when only
+			// whitespace lies to the left; there's nothing to jump to, so no-op.
+			if slices.Contains(m.input.KeyMap.WordBackward.Keys(), ks) && m.nothingLeftOfCursor() {
+				debug.Trace(dbgTUI, "word jump", "dir", "back", "outcome", "nothing-left")
 				return m, nil
 			}
 			m.showHome = false
@@ -843,12 +843,29 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // rather than editing a fresh line.
 func (m *model) navigatingHistory() bool { return m.histPos < len(m.history) }
 
-// atInputStart reports whether the cursor sits at the very start of the buffer.
-// The textarea's word-backward (alt/Command+←) infinite-loops there, so callers
-// guard it.
-func (m *model) atInputStart() bool {
+// nothingLeftOfCursor reports whether every rune before the cursor is
+// whitespace. The bundled textarea's word-backward (alt/Command+←) infinite-
+// loops whenever it walks left through only whitespace back to the start of the
+// buffer — empty buffer, leading spaces, or an empty first line above the
+// cursor all trigger it — so callers guard it. There's nothing to jump to anyway.
+func (m *model) nothingLeftOfCursor() bool {
+	lines := strings.Split(m.input.Value(), "\n")
+	row := m.input.Line()
+	if row < 0 || row >= len(lines) {
+		return true
+	}
+	for _, l := range lines[:row] {
+		if strings.TrimSpace(l) != "" {
+			return false
+		}
+	}
 	li := m.input.LineInfo()
-	return m.input.Line() == 0 && li.RowOffset == 0 && li.ColumnOffset == 0
+	col := li.StartColumn + li.ColumnOffset
+	cur := []rune(lines[row])
+	if col > len(cur) {
+		col = len(cur)
+	}
+	return strings.TrimSpace(string(cur[:col])) == ""
 }
 
 // recordHistory appends a submitted input to the recall history (skipping blanks

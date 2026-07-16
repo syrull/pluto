@@ -221,6 +221,7 @@ type workspace struct {
 	finderBase  string
 	lines       []entry
 	history     []string
+	histPos     int
 	outputs     []toolOutput
 	codeBlocks  []codeBlock
 	streamText  string
