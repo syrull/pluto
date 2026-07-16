@@ -88,31 +88,6 @@ Only a *judge error* triggers the prompt — a guard block or an explicit judge
 (a background or headless run), pluto falls back to the non-interactive policy set
 by `PLUTO_AUTO_ON_JUDGE_ERR` (`block` by default, `allow` to fail open).
 
-## Skills
-
-Skills are short, single-topic playbooks the agent pulls into context only when
-a task needs them, so the base system prompt stays small. Drop plain-text files
-in a `skills/` directory where you run pluto (typically your repository root):
-
-```
-skills/
-  run-tests.md
-  cut-release.md
-  add-a-tool.md
-```
-
-- One skill per file, named `<skill-name>.md` (or `.txt`). The filename (without
-  extension) is the skill's name.
-- The first non-empty line is the one-line **summary** shown in the always-on
-  index; a leading Markdown `#` is stripped. Keep it short.
-- Everything in the file is the **body**, loaded on demand.
-
-Only the compact index (name + summary) rides in the system prompt. The model
-loads a full body when it's relevant via the `skill` tool: calling it with no
-arguments lists the available skills, and passing a `name` returns that skill's
-full text. Because skills are plain text, you can also open them with the
-`read`/`find` tools or your editor.
-
 ## Debugging
 
 Pluto can record a structured, timestamped log of *everything* that happens in a
