@@ -573,26 +573,32 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch ks {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "pgup", "pgdown", "ctrl+u", "ctrl+d":
+		case "pgup", "pgdown", "ctrl+u", "ctrl+d", "up", "down":
+			// ↑/↓ always scroll the transcript; recall lives on ctrl+p/ctrl+n so
+			// reading back a finished turn never falls into the last message.
+			debug.Trace(dbgTUI, "chat key", "key", ks, "action", "scroll")
 			var cmd tea.Cmd
 			m.vp, cmd = m.vp.Update(msg)
 			return m, cmd
-		case "up":
+		case "ctrl+p":
+			// Recall the previous input; on an empty buffer only. When there's
+			// nothing to recall, fall through so the textarea moves the cursor up a
+			// line in a multi-line draft.
 			if m.historyPrev() {
+				debug.Trace(dbgTUI, "chat key", "key", ks, "action", "recall")
 				m.refreshCommandMenu()
 				return m, nil
 			}
-			var cmd tea.Cmd
-			m.vp, cmd = m.vp.Update(msg)
-			return m, cmd
-		case "down":
+			debug.Trace(dbgTUI, "chat key", "key", ks, "action", "cursor")
+			return m.editInput(msg)
+		case "ctrl+n":
 			if m.historyNext() {
+				debug.Trace(dbgTUI, "chat key", "key", ks, "action", "recall")
 				m.refreshCommandMenu()
 				return m, nil
 			}
-			var cmd tea.Cmd
-			m.vp, cmd = m.vp.Update(msg)
-			return m, cmd
+			debug.Trace(dbgTUI, "chat key", "key", ks, "action", "cursor")
+			return m.editInput(msg)
 		case "ctrl+o":
 			if o, ok := m.lastOutput(); ok {
 				m.openModal(o)
@@ -678,17 +684,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				debug.Trace(dbgTUI, "word jump", "dir", "back", "outcome", "nothing-left")
 				return m, nil
 			}
-			m.showHome = false
-			before := m.input.Value()
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			// Editing a recalled line drops out of history navigation so a later
-			// ↑/↓ can't silently clobber the changes; a pure cursor move stays in.
-			if m.navigatingHistory() && m.input.Value() != before {
-				m.histPos = len(m.history)
-			}
-			m.refreshCommandMenu()
-			return m, cmd
+			return m.editInput(msg)
 		}
 
 	case tea.MouseMsg:
@@ -839,8 +835,23 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.forwardToInput(msg)
 }
 
-// navigatingHistory reports whether ↑/↓ are currently walking recalled inputs
-// rather than editing a fresh line.
+// editInput forwards a key into the input textarea, dropping out of history
+// navigation when the edit changes the buffer so a later recall can't silently
+// clobber it; a pure cursor move (e.g. ctrl+p/ctrl+n line nav) stays in.
+func (m model) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.showHome = false
+	before := m.input.Value()
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	if m.navigatingHistory() && m.input.Value() != before {
+		m.histPos = len(m.history)
+	}
+	m.refreshCommandMenu()
+	return m, cmd
+}
+
+// navigatingHistory reports whether ctrl+p/ctrl+n are currently walking recalled
+// inputs rather than editing a fresh line.
 func (m *model) navigatingHistory() bool { return m.histPos < len(m.history) }
 
 // nothingLeftOfCursor reports whether every rune before the cursor is
@@ -870,7 +881,7 @@ func (m *model) nothingLeftOfCursor() bool {
 
 // recordHistory appends a submitted input to the recall history (skipping blanks
 // and consecutive duplicates) and rewinds the navigation cursor to the end so the
-// next ↑ starts from the most recent entry.
+// next ctrl+p starts from the most recent entry.
 func (m *model) recordHistory(in string) {
 	if in == "" {
 		m.histPos = len(m.history)
@@ -895,7 +906,7 @@ func (m *model) setInputFromHistory() {
 
 // historyPrev recalls the previous (older) submitted input, starting recall only
 // from an empty buffer. It reports whether it consumed the key so the caller
-// scrolls the transcript only when there is nothing to recall.
+// falls through to the textarea (cursor up a line) when there is nothing to recall.
 func (m *model) historyPrev() bool {
 	if len(m.history) == 0 {
 		debug.Trace(dbgTUI, "history recall", "dir", "prev", "outcome", "empty")
@@ -920,7 +931,7 @@ func (m *model) historyPrev() bool {
 
 // historyNext walks toward the newest submitted input, clearing the buffer once
 // it steps past the last entry. It acts only while navigating; otherwise it
-// reports false so the caller scrolls the transcript.
+// reports false so the caller falls through to the textarea (cursor down a line).
 func (m *model) historyNext() bool {
 	if !m.navigatingHistory() {
 		debug.Trace(dbgTUI, "history recall", "dir", "next", "outcome", "not-navigating")

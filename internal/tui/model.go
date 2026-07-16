@@ -85,8 +85,8 @@ type model struct {
 	// the turn on submit, then cleared.
 	attachments []llm.Attachment
 
-	// history records submitted inputs (oldest→newest) so ↑/↓ recall them like a
-	// shell prompt; histPos is the cursor into it, where histPos == len(history)
+	// history records submitted inputs (oldest→newest) so ctrl+p/ctrl+n recall them
+	// like a shell prompt; histPos is the cursor into it, where histPos == len(history)
 	// means "not navigating" — the buffer is a fresh, editable line.
 	history []string
 	histPos int
