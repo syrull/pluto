@@ -19,6 +19,7 @@ import (
 	"github.com/syrull/pluto/internal/llm/anthropic"
 	"github.com/syrull/pluto/internal/policy"
 	"github.com/syrull/pluto/internal/reposcan"
+	"github.com/syrull/pluto/internal/skills"
 	"github.com/syrull/pluto/internal/tool"
 	"github.com/syrull/pluto/internal/tools"
 	"github.com/syrull/pluto/internal/tui"
@@ -44,12 +45,14 @@ var contextFiles = []string{"CLAUDE.md", "AGENTS.md"}
 
 // buildSystemPrompt appends a listing of the registered tools to the static
 // base so the prompt always reflects the actual registry rather than a
-// hardcoded list that can drift as tools are added or removed. Any project
-// context files (see contextFiles) present in the working directory are
-// injected after the tool listing so their guidance rides along with the
-// system message on every conversation reset. A one-shot repo snapshot
-// (see internal/reposcan) is appended last so the model starts knowing the
-// basic layout instead of rediscovering it turn-by-turn; it is built once at
+// hardcoded list that can drift as tools are added or removed. A compact skills
+// index (name + summary, see internal/skills) follows so the model knows which
+// on-demand playbooks exist without paying for their full bodies — those are
+// loaded lazily via the skill tool. Any project context files (see contextFiles)
+// present in the working directory are injected next so their guidance rides
+// along with the system message on every conversation reset. A one-shot repo
+// snapshot (see internal/reposcan) is appended last so the model starts knowing
+// the basic layout instead of rediscovering it turn-by-turn; it is built once at
 // startup and stays inside the cached system prefix.
 func buildSystemPrompt(reg *tool.Registry) string {
 	var b strings.Builder
@@ -57,6 +60,13 @@ func buildSystemPrompt(reg *tool.Registry) string {
 	b.WriteString("\n\nAvailable tools:")
 	for _, t := range reg.Tools() {
 		fmt.Fprintf(&b, "\n- %s: %s", t.Name(), t.Description())
+	}
+	skillsTimer := debug.NewTimer("lifecycle", "skills scanned")
+	list := skills.List(skills.DirName)
+	skillsTimer.Stop("dir", skills.DirName, "count", len(list))
+	if len(list) > 0 {
+		fmt.Fprintf(&b, "\n\n--- Skills (load a full playbook on demand with the skill tool) ---\n%s", skills.Render(list))
+		debug.Info("lifecycle", "skills indexed", "count", len(list))
 	}
 	for _, name := range contextFiles {
 		data, err := os.ReadFile(name)
@@ -106,6 +116,7 @@ func main() {
 	reg.MustRegister(tools.Bash{})
 	reg.MustRegister(tools.Edit{})
 	reg.MustRegister(tools.Find{})
+	reg.MustRegister(tools.Skill{})
 
 	provider := selectProvider()
 	gate, judgeProvider := buildGate()
