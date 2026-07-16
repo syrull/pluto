@@ -85,6 +85,12 @@ type model struct {
 	// the turn on submit, then cleared.
 	attachments []llm.Attachment
 
+	// history records submitted inputs (oldest→newest) so ↑/↓ recall them like a
+	// shell prompt; histPos is the cursor into it, where histPos == len(history)
+	// means "not navigating" — the buffer is a fresh, editable line.
+	history []string
+	histPos int
+
 	// inlineCancel aborts a running inline `!` shell command; nil when none is
 	// running. inlineEpoch fences its result so a canceled or superseded run's
 	// late-arriving output is dropped.
@@ -214,6 +220,7 @@ type workspace struct {
 	finder      *widgets.FuzzyPicker
 	finderBase  string
 	lines       []entry
+	history     []string
 	outputs     []toolOutput
 	codeBlocks  []codeBlock
 	streamText  string
@@ -269,6 +276,9 @@ func newInput(width int) textarea.Model {
 	ta.SetPromptFunc(2, promptFunc("› ", stylePrompt))
 	ta.SetHeight(inputHeight)
 	ta.SetWidth(width)
+	// Command+←/→ (super) jump words, alongside the default alt/emacs bindings.
+	ta.KeyMap.WordBackward.SetKeys("alt+left", "alt+b", "super+left")
+	ta.KeyMap.WordForward.SetKeys("alt+right", "alt+f", "super+right")
 	ta.Focus()
 	return ta
 }
