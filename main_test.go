@@ -1,10 +1,16 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/tool"
 	"github.com/syrull/pluto/internal/tools"
 )
@@ -253,5 +259,113 @@ func TestBuildSystemPromptContentTrimmed(t *testing.T) {
 	// Verify the padded version does NOT appear (i.e., not "  padded  ").
 	if strings.Contains(prompt, "  padded  ") {
 		t.Errorf("buildSystemPrompt() contains untrimmmed padded content")
+	}
+}
+
+// fakeReauther records Reauth calls, standing in for an auxiliary Anthropic
+// provider (judge/summarizer) in the /login reauth tests.
+type fakeReauther struct {
+	name  string
+	err   error
+	calls int
+}
+
+func (f *fakeReauther) Reauth() error { f.calls++; return f.err }
+func (f *fakeReauther) Name() string  { return f.name }
+
+// seedStoredToken points HOME at a temp dir holding a valid credentials.json and
+// clears the env credentials, so the main provider's reauth (anthropic.New) can
+// authenticate deterministically from the store — mimicking a fresh /login.
+func seedStoredToken(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ANTHROPIC_OAUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	store := filepath.Join(home, ".pluto", "credentials.json")
+	if err := os.MkdirAll(filepath.Dir(store), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(map[string]any{
+		"accessToken": "fresh-tok",
+		"expiresAt":   time.Now().Add(time.Hour).UnixMilli(),
+	})
+	if err := os.WriteFile(store, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReauthProvidersReauthsAuxProviders guards the /login regression: a
+// re-login must refresh the judge and summarizer providers, not just the main
+// model, or the judge keeps its expired token and the fail-safe policy blocks
+// every command.
+func TestReauthProvidersReauthsAuxProviders(t *testing.T) {
+	seedStoredToken(t)
+	ag := agent.New(llm.Stub{}, newTestRegistry(t), "sys")
+	judge := &fakeReauther{name: "judge"}
+	summarizer := &fakeReauther{name: "summarizer"}
+
+	status, err := reauthProviders(ag, judge, summarizer)
+	if err != nil {
+		t.Fatalf("reauthProviders() error = %v", err)
+	}
+	if judge.calls != 1 {
+		t.Errorf("judge provider reauthed %d times, want 1", judge.calls)
+	}
+	if summarizer.calls != 1 {
+		t.Errorf("summarizer provider reauthed %d times, want 1", summarizer.calls)
+	}
+	if !strings.Contains(status, "logged in") {
+		t.Errorf("status = %q, want it to report a successful login", status)
+	}
+}
+
+// TestReauthProvidersContinuesOnAuxFailure verifies a failing auxiliary provider
+// does not abort the login or stop the other aux providers from being refreshed,
+// and that the failure is surfaced in the status line.
+func TestReauthProvidersContinuesOnAuxFailure(t *testing.T) {
+	seedStoredToken(t)
+	ag := agent.New(llm.Stub{}, newTestRegistry(t), "sys")
+	bad := &fakeReauther{name: "judge", err: errors.New("boom")}
+	good := &fakeReauther{name: "summarizer"}
+
+	status, err := reauthProviders(ag, bad, good)
+	if err != nil {
+		t.Fatalf("reauthProviders() error = %v, want nil (main login succeeded)", err)
+	}
+	if bad.calls != 1 || good.calls != 1 {
+		t.Errorf("aux reauth calls: bad=%d good=%d, want both attempted once", bad.calls, good.calls)
+	}
+	if !strings.Contains(status, "logged in") {
+		t.Errorf("status = %q, want it to still report a successful login", status)
+	}
+	if !strings.Contains(status, "auxiliary") {
+		t.Errorf("status = %q, want it to surface the auxiliary reauth failure", status)
+	}
+}
+
+// TestReauthProvidersFailsWhenMainProviderFails verifies that when the main
+// provider cannot authenticate, the login fails and auxiliary providers are not
+// touched.
+func TestReauthProvidersFailsWhenMainProviderFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ANTHROPIC_OAUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	ag := agent.New(llm.Stub{}, newTestRegistry(t), "sys")
+	judge := &fakeReauther{name: "judge"}
+
+	if _, err := reauthProviders(ag, judge); err == nil {
+		t.Fatal("reauthProviders() expected error when main provider cannot authenticate")
+	}
+	if judge.calls != 0 {
+		t.Errorf("judge provider reauthed %d times, want 0 when main login fails", judge.calls)
+	}
+}
+
+// TestAuxReauthersFiltersNil verifies nil providers (judge/summarizer that never
+// authenticated) are dropped so /login never calls methods on a nil pointer.
+func TestAuxReauthersFiltersNil(t *testing.T) {
+	if got := auxReauthers(nil, nil); got != nil {
+		t.Errorf("auxReauthers(nil, nil) = %v, want nil", got)
 	}
 }

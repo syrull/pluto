@@ -108,13 +108,13 @@ func main() {
 	reg.MustRegister(tools.Find{})
 
 	provider := selectProvider()
-	gate := buildGate()
+	gate, judgeProvider := buildGate()
 	systemPrompt := buildSystemPrompt(reg)
 	logConfig(provider, gate)
 
 	// One summarizer, shared by the agents (context compaction) and the TUI
 	// (agent auto-labeling); nil when it can't authenticate.
-	summarizer := buildSummarizer()
+	summarizer, summarizerProvider := buildSummarizer()
 
 	// newAgent builds a fresh agent for each workspace: same provider, tools, gate,
 	// system prompt, and summarizer, but an independent transcript so agents run in
@@ -128,7 +128,12 @@ func main() {
 	}
 	ag := newAgent()
 	debug.Info("lifecycle", "starting TUI")
-	if _, err := tui.New(ag, newAgent, summarizer, buildLoginHook(ag)).Run(); err != nil {
+	// /login must re-authenticate every Anthropic provider, not just the main
+	// model: the judge and summarizer cache their own token, so without this a
+	// re-login leaves the judge on an expired token and the fail-safe policy
+	// blocks every command for the rest of the session.
+	loginHook := buildLoginHook(ag, auxReauthers(judgeProvider, summarizerProvider)...)
+	if _, err := tui.New(ag, newAgent, summarizer, loginHook).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
@@ -196,45 +201,111 @@ func redactedEnv(key string) string {
 
 // buildSummarizer returns a cheap one-shot summarizer backed by the judge model,
 // shared by context compaction (summarizing evicted exchanges) and TUI agent
-// auto-labeling, or nil when it can't authenticate — callers fall back to plain
+// auto-labeling, along with its Anthropic provider so /login can re-authenticate
+// it. Both are nil when it can't authenticate — callers fall back to plain
 // eviction and first-message labels respectively.
-func buildSummarizer() func(context.Context, string) (string, error) {
+func buildSummarizer() (func(context.Context, string) (string, error), *anthropic.Provider) {
 	p, err := anthropic.New(judgeModel())
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	p.SetWebSearchMaxUses(0)
 	p.SetThinkLevel(llm.ThinkNone)
-	return func(ctx context.Context, prompt string) (string, error) {
+	fn := func(ctx context.Context, prompt string) (string, error) {
 		resp, err := p.Generate(ctx, []llm.Message{{Role: llm.RoleUser, Content: prompt}}, nil)
 		if err != nil {
 			return "", err
 		}
 		return resp.Text, nil
 	}
+	return fn, p
+}
+
+// reauther is any Anthropic provider whose cached credentials can be refreshed
+// from the auth store after a /login. *anthropic.Provider satisfies it.
+type reauther interface {
+	Reauth() error
+	Name() string
+}
+
+// auxReauthers collects the non-nil auxiliary Anthropic providers (judge,
+// summarizer) so /login can refresh their credentials too.
+func auxReauthers(ps ...*anthropic.Provider) []reauther {
+	var out []reauther
+	for _, p := range ps {
+		if p != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// reauthProviders refreshes credentials for the live agent provider and every
+// auxiliary Anthropic provider (judge, summarizer) after a successful /login.
+// Each provider caches its token at construction, so without this a re-login
+// would restore only the main model while the judge kept its expired token —
+// leaving the fail-safe policy to block every command. An auxiliary failure is
+// logged and surfaced in the status line but does not fail the login, since the
+// main model is the user-facing outcome.
+func reauthProviders(ag *agent.Agent, aux ...reauther) (string, error) {
+	status, err := reauthMain(ag)
+	if err != nil {
+		return "", err
+	}
+	var failed int
+	for _, p := range aux {
+		if p == nil {
+			continue
+		}
+		timer := debug.NewTimer("auth", "aux provider reauth")
+		if rerr := p.Reauth(); rerr != nil {
+			failed++
+			timer.Stop("provider", p.Name(), "outcome", "error", "err", rerr)
+			debug.Warn("auth", "aux provider reauth failed", "provider", p.Name(), "err", rerr)
+			continue
+		}
+		timer.Stop("provider", p.Name(), "outcome", "ok")
+		debug.Info("auth", "aux provider reauthenticated", "provider", p.Name())
+	}
+	if failed > 0 {
+		status += fmt.Sprintf(" (%d auxiliary provider(s) still unauthenticated — see debug log)", failed)
+	}
+	return status, nil
+}
+
+// reauthMain re-authenticates the live agent provider, upgrading from the
+// offline stub when the session started without credentials.
+func reauthMain(ag *agent.Agent) (string, error) {
+	if sw, ok := ag.Switcher(); ok {
+		if p, isAnthropic := sw.(*anthropic.Provider); isAnthropic {
+			timer := debug.NewTimer("auth", "provider reauth")
+			if err := p.Reauth(); err != nil {
+				timer.Stop("provider", p.Name(), "outcome", "error", "err", err)
+				debug.Warn("auth", "provider reauth failed", "provider", p.Name(), "err", err)
+				return "", err
+			}
+			timer.Stop("provider", ag.ProviderName(), "outcome", "ok")
+			debug.Info("auth", "provider reauthenticated", "provider", ag.ProviderName())
+			return "logged in — " + ag.ProviderName(), nil
+		}
+	}
+	p, err := anthropic.New(defaultModel())
+	if err != nil {
+		debug.Warn("auth", "provider upgrade failed", "err", err)
+		return "", err
+	}
+	ag.SetProvider(p)
+	debug.Info("auth", "provider upgraded from stub", "provider", ag.ProviderName())
+	return "logged in — upgraded to " + ag.ProviderName(), nil
 }
 
 // buildLoginHook wires /login to the Anthropic OAuth flow: it builds the PKCE
 // authorization URL, waits on a local callback server (with a manual paste
 // fallback), exchanges/persists the token, and re-authenticates the live
-// provider (upgrading from the offline stub if needed).
-func buildLoginHook(ag *agent.Agent) *tui.LoginHook {
-	reauth := func() (string, error) {
-		if sw, ok := ag.Switcher(); ok {
-			if p, isAnthropic := sw.(*anthropic.Provider); isAnthropic {
-				if err := p.Reauth(); err != nil {
-					return "", err
-				}
-				return "logged in — " + ag.ProviderName(), nil
-			}
-		}
-		p, err := anthropic.New(defaultModel())
-		if err != nil {
-			return "", err
-		}
-		ag.SetProvider(p)
-		return "logged in — upgraded to " + ag.ProviderName(), nil
-	}
+// provider (upgrading from the offline stub if needed) plus every auxiliary
+// Anthropic provider (judge, summarizer).
+func buildLoginHook(ag *agent.Agent, aux ...reauther) *tui.LoginHook {
+	reauth := func() (string, error) { return reauthProviders(ag, aux...) }
 	return &tui.LoginHook{
 		Authorize: func() (string, any, error) {
 			url, flow, err := auth.AuthorizeURL()
@@ -288,23 +359,25 @@ func contextLimit() int {
 	return 0
 }
 
-// buildGate constructs the auto-mode review gate. It returns nil (allow-all)
-// when PLUTO_AUTO=off. When the judge provider can't authenticate, auto mode
-// stays on in guard-only form so catastrophic commands are still blocked.
-func buildGate() agent.Gate {
+// buildGate constructs the auto-mode review gate and returns the judge's
+// Anthropic provider so /login can re-authenticate it alongside the main model.
+// The gate is nil (allow-all) when PLUTO_AUTO=off; the judge provider is nil
+// when auto mode is off or the judge can't authenticate — in which case auto
+// mode stays on in guard-only form so catastrophic commands are still blocked.
+func buildGate() (agent.Gate, *anthropic.Provider) {
 	cfg := policy.LoadConfig()
 	if cfg.Mode == policy.ModeOff {
-		return nil
+		return nil, nil
 	}
 	model := judgeModel()
 	jp, err := anthropic.New(model)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pluto: judge unavailable, auto mode running guard-only:", err)
-		return policy.NewReviewGate(cfg, nil)
+		return policy.NewReviewGate(cfg, nil), nil
 	}
 	jp.SetWebSearchMaxUses(0) // the judge never needs web search
 	cfg.JudgeName = model
-	return policy.NewReviewGate(cfg, judge.NewLLM(jp))
+	return policy.NewReviewGate(cfg, judge.NewLLM(jp)), jp
 }
 
 // selectProvider returns the Anthropic provider if it can authenticate,
