@@ -2,7 +2,7 @@ BINARY := pluto
 VERSION ?= dev
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: all build run test vet fmt fmt-check tidy clean
+.PHONY: all build run test race vet fmt fmt-check tidy clean
 
 all: fmt-check vet test build
 
@@ -14,6 +14,9 @@ run:
 
 test:
 	go test ./...
+
+race:
+	go test -race ./...
 
 vet:
 	go vet ./...
