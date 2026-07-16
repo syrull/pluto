@@ -90,6 +90,8 @@ func (m *model) stash(i int) {
 	w.finder = m.finder
 	w.finderBase = m.finderBase
 	w.lines = m.lines
+	w.history = m.history
+	w.histPos = m.histPos
 	w.outputs = m.outputs
 	w.codeBlocks = m.codeBlocks
 	w.streamText = m.streamText
@@ -116,6 +118,14 @@ func (m *model) unstash(i int) {
 	m.finder = w.finder
 	m.finderBase = w.finderBase
 	m.lines = w.lines
+	m.history = w.history
+	// A transient background swap (onWorkspace) must leave the visible input's
+	// recall position untouched; a user-facing switch starts fresh (not navigating).
+	if m.swapped {
+		m.histPos = w.histPos
+	} else {
+		m.histPos = len(w.history)
+	}
 	m.outputs = w.outputs
 	m.codeBlocks = w.codeBlocks
 	m.streamText = w.streamText
