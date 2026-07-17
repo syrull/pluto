@@ -62,8 +62,9 @@ func (m *model) renderMarkdown(src string) string {
 
 // renderUserLine wraps a user message to the viewport width, indenting
 // continuation lines under the prompt so multi-line input doesn't run off
-// screen, and appends a chip when the turn carries image attachments.
-func (m *model) renderUserLine(in string, atts ...llm.Attachment) string {
+// screen, and appends chips when the turn carries image attachments or staged
+// GitHub issue context.
+func (m *model) renderUserLine(in string, atts []llm.Attachment, ctx []ghIssue) string {
 	w := m.contentWidth()
 	const prefix = "› "
 	w -= len(prefix)
@@ -81,6 +82,9 @@ func (m *model) renderUserLine(in string, atts ...llm.Attachment) string {
 		}
 	}
 	if chip := attachmentChip(atts); chip != "" {
+		lines = append(lines, indent+styleHint.Render(chip))
+	}
+	if chip := ghContextChip(ctx); chip != "" {
 		lines = append(lines, indent+styleHint.Render(chip))
 	}
 	return strings.Join(lines, "\n")
@@ -323,6 +327,10 @@ func (m model) modelStatus() string {
 
 	if chip := attachmentChip(m.attachments); chip != "" {
 		add(styleStatusAttach.Render(chip), chip)
+	}
+
+	if chip := ghContextChip(m.ghContext); chip != "" {
+		add(styleStatusContext.Render(chip), chip)
 	}
 
 	if m.git.isRepo {

@@ -337,6 +337,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		}
 		m.ghm = newGHModal()
 		m.ghm.SetSize(m.width, m.height)
+		m.ghm.SetContext(m.ghContextNumbers())
 		return "", fetchGitHubCmd
 
 	case "/image":
@@ -640,8 +641,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			in := strings.TrimSpace(m.input.Value())
-			// A bare enter with staged images still sends (an image-only turn).
-			if in == "" && len(m.attachments) == 0 {
+			// A bare enter with staged images or issue context still sends (an
+			// attachment/context-only turn).
+			if in == "" && len(m.attachments) == 0 && len(m.ghContext) == 0 {
 				return m, nil
 			}
 			m.showHome = false
@@ -662,9 +664,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				atts := m.takeAttachments()
-				m.pushText(m.renderUserLine(in, atts...))
+				issues := m.takeGHContext()
+				m.pushText(m.renderUserLine(in, atts, issues))
 				m.input.Reset()
-				m.agent.Steer(in, atts...)
+				m.agent.Steer(composeWithGHContext(issues, in), atts...)
 				m.syncViewport()
 				return m, nil
 			}
@@ -675,7 +678,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// it still echoes as a user line (rendered without a chip).
 			if strings.HasPrefix(in, "/") {
 				if strings.Fields(in)[0] == "/image" {
-					m.pushText(m.renderUserLine(in))
+					m.pushText(m.renderUserLine(in, nil, nil))
 				}
 				m.input.Reset()
 				status, cmd := m.handleCommand(in)
@@ -686,10 +689,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			atts := m.takeAttachments()
-			m.pushText(m.renderUserLine(in, atts...))
+			issues := m.takeGHContext()
+			m.pushText(m.renderUserLine(in, atts, issues))
 			m.input.Reset()
 			m.busy = true
-			cmd := m.runAgent(in, atts)
+			cmd := m.runAgent(composeWithGHContext(issues, in), atts)
 			m.syncViewport()
 			return m, cmd
 		default:
@@ -1029,6 +1033,8 @@ func (m *model) applyGHOutcome(out ghOutcome) tea.Cmd {
 	case ghOutcomeOpenURL:
 		openBrowser(out.url)
 		m.notice = "✓ opened " + out.url
+	case ghOutcomeAddContext:
+		m.toggleGHContext(out.issue)
 	case ghOutcomeFetchChecks:
 		return fetchChecksCmd(out.pr.Number)
 	case ghOutcomeCloseIssue:
@@ -1065,7 +1071,7 @@ func (m *model) applyGHOutcome(out ghOutcome) tea.Cmd {
 // in the transcript, mirroring a normal submitted message.
 func (m *model) startGHConversation(prompt, label string) tea.Cmd {
 	m.showHome = false
-	m.pushText(m.renderUserLine(label))
+	m.pushText(m.renderUserLine(label, nil, nil))
 	m.busy = true
 	cmd := m.runAgent(prompt, nil)
 	m.syncViewport()

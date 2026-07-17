@@ -40,6 +40,7 @@ var (
 	styleCopyBtn  = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("5")).Bold(true)
 	styleCloseBtn = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("3")).Bold(true)
 	styleErrBtn   = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("1")).Bold(true)
+	styleAddBtn   = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("2")).Bold(true)
 	styleBashBox  = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("4")).
@@ -68,14 +69,15 @@ var (
 	styleTreeFile        = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 
 	// Status line: one readable color per segment, with the active model bold so it stands out.
-	styleStatusModel  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	styleStatusThink  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	styleStatusCtx    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	styleStatusMouse  = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	styleStatusLearn  = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	styleStatusGit    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleStatusCwd    = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	styleStatusAttach = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleStatusModel   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleStatusThink   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	styleStatusCtx     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	styleStatusMouse   = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	styleStatusLearn   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	styleStatusGit     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styleStatusCwd     = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	styleStatusAttach  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	styleStatusContext = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
 
 	// Planet banner: the off-white body and purple orbiting dot from the logo.
 	stylePlanet     = lipgloss.NewStyle().Foreground(lipgloss.Color("#F4F2EE"))

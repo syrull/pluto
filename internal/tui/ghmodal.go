@@ -43,6 +43,7 @@ const (
 	ghOutcomeFetchChecks
 	ghOutcomeCloseIssue
 	ghOutcomeMergePR
+	ghOutcomeAddContext
 )
 
 // ghOutcome tells the model what to do after a key press in the browser. For
@@ -89,15 +90,27 @@ type ghModal struct {
 	// confirmMerge arms the irreversible Merge action the same way as confirmClose.
 	confirmMerge bool
 
+	// added tracks issue numbers already staged into the message context, so the
+	// [a] action button reflects membership. Seeded from the model on open.
+	added map[int]bool
+
 	width, height int
 }
 
 func newGHModal() *ghModal {
 	debug.Info(dbgTUI, "github browser opened")
-	g := &ghModal{loading: true, vp: viewport.New(), checks: map[int]*ghChecks{}}
+	g := &ghModal{loading: true, vp: viewport.New(), checks: map[int]*ghChecks{}, added: map[int]bool{}}
 	g.vp.KeyMap = ghDetailKeyMap()
 	g.vp.FillHeight = true // pad short bodies so the modal stays full-page
 	return g
+}
+
+// SetContext seeds the set of issue numbers already staged into the message
+// context so the [a] action button opens in the right state.
+func (g *ghModal) SetContext(numbers []int) {
+	for _, n := range numbers {
+		g.added[n] = true
+	}
 }
 
 func ghDetailKeyMap() viewport.KeyMap {
@@ -169,9 +182,11 @@ func (g *ghModal) boxHeight() int {
 }
 
 // detailBodyHeight is the number of rows the scrollable detail body gets, after
-// reserving the fixed meta/title/action/hint lines and the checks pane.
+// reserving the meta/title/hint lines, the (possibly wrapped) action rows, and
+// the checks pane.
 func (g *ghModal) detailBodyHeight() int {
-	h := g.boxHeight() - 6 - g.checksPaneHeight()
+	actionRows := len(packButtons(g.actionButtons(), g.contentWidth()))
+	h := g.boxHeight() - 5 - actionRows - g.checksPaneHeight()
 	if h < 3 {
 		h = 3
 	}
@@ -473,6 +488,11 @@ func (g *ghModal) detailKey(ks string) (bool, ghOutcome) {
 		if u := g.selectedURL(); u != "" {
 			return true, ghOutcome{kind: ghOutcomeOpenURL, url: u}
 		}
+	case "a":
+		if is, ok := g.selectedIssue(); ok {
+			g.added[is.Number] = !g.added[is.Number]
+			return true, ghOutcome{kind: ghOutcomeAddContext, issue: is}
+		}
 	case "d":
 		if is, ok := g.selectedIssue(); ok && is.LinkedPR == 0 {
 			return true, ghOutcome{kind: ghOutcomeDevelop, issue: is}
@@ -667,7 +687,6 @@ func (g *ghModal) listRow(idx int, selected bool, w int) string {
 
 func (g *ghModal) detailView(cw int) string {
 	var meta, heading string
-	var actions []string
 	if is, ok := g.selectedIssue(); ok {
 		meta = fmt.Sprintf("Issue #%d · %s", is.Number, is.State)
 		if is.Author != "" {
@@ -682,14 +701,6 @@ func (g *ghModal) detailView(cw int) string {
 		heading = is.Title
 		if is.LinkedPR != 0 {
 			meta += fmt.Sprintf(" · linked PR #%d", is.LinkedPR)
-			actions = append(actions, styleShowBtn.Render(fmt.Sprintf(" [r] Review PR #%d ", is.LinkedPR)))
-		} else {
-			actions = append(actions, styleShowBtn.Render(" [d] Develop "))
-		}
-		if g.confirmClose {
-			actions = append(actions, styleErrBtn.Render(" [c] confirm close "))
-		} else {
-			actions = append(actions, styleCloseBtn.Render(" [c] Close "))
 		}
 	} else if pr, ok := g.selectedPR(); ok {
 		meta = fmt.Sprintf("PR #%d · %s", pr.Number, pr.State)
@@ -706,6 +717,41 @@ func (g *ghModal) detailView(cw int) string {
 			meta += " · opened " + opened
 		}
 		heading = pr.Title
+	}
+
+	title := styleModalTitle.MaxWidth(cw).Render(widgets.Sanitize(heading))
+	metaLine := styleHint.MaxWidth(cw).Render(widgets.Sanitize(meta))
+	hint := styleHint.Render("↑/↓ scroll · esc back")
+
+	segments := []string{metaLine, title, "", g.vp.View()}
+	segments = append(segments, g.checksPane(cw)...)
+	segments = append(segments, "")
+	segments = append(segments, packButtons(g.actionButtons(), cw)...)
+	segments = append(segments, hint)
+	return lipgloss.JoinVertical(lipgloss.Left, segments...)
+}
+
+// actionButtons builds the action-button row for the open detail: Develop/Review
+// and Add-to-Context/Close for an issue, Review/Merge for a PR, plus Open.
+func (g *ghModal) actionButtons() []string {
+	var actions []string
+	if is, ok := g.selectedIssue(); ok {
+		if is.LinkedPR != 0 {
+			actions = append(actions, styleShowBtn.Render(fmt.Sprintf(" [r] Review PR #%d ", is.LinkedPR)))
+		} else {
+			actions = append(actions, styleShowBtn.Render(" [d] Develop "))
+		}
+		if g.added[is.Number] {
+			actions = append(actions, styleAddBtn.Render(" [a] ✓ In context "))
+		} else {
+			actions = append(actions, styleAddBtn.Render(" [a] Add to Context "))
+		}
+		if g.confirmClose {
+			actions = append(actions, styleErrBtn.Render(" [c] confirm close "))
+		} else {
+			actions = append(actions, styleCloseBtn.Render(" [c] Close "))
+		}
+	} else if pr, ok := g.selectedPR(); ok {
 		actions = append(actions, styleShowBtn.Render(" [r] Review "))
 		switch {
 		case pr.Draft:
@@ -716,15 +762,29 @@ func (g *ghModal) detailView(cw int) string {
 			actions = append(actions, styleCloseBtn.Render(" [m] Merge "))
 		}
 	}
-	actions = append(actions, styleCopyBtn.Render(" [o] Open in browser "))
+	return append(actions, styleCopyBtn.Render(" [o] Open in browser "))
+}
 
-	title := styleModalTitle.MaxWidth(cw).Render(widgets.Sanitize(heading))
-	metaLine := styleHint.MaxWidth(cw).Render(widgets.Sanitize(meta))
-	actionLine := strings.Join(actions, "  ")
-	hint := styleHint.Render("↑/↓ scroll · esc back")
-
-	segments := []string{metaLine, title, "", g.vp.View()}
-	segments = append(segments, g.checksPane(cw)...)
-	segments = append(segments, "", actionLine, hint)
-	return lipgloss.JoinVertical(lipgloss.Left, segments...)
+// packButtons lays action buttons across as many lines as needed so no line
+// exceeds width, breaking only between buttons so a button is never split.
+func packButtons(buttons []string, width int) []string {
+	var lines []string
+	cur, curW := "", 0
+	for _, b := range buttons {
+		bw := lipgloss.Width(b)
+		switch {
+		case cur == "":
+			cur, curW = b, bw
+		case curW+2+bw <= width:
+			cur += "  " + b
+			curW += 2 + bw
+		default:
+			lines = append(lines, cur)
+			cur, curW = b, bw
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return lines
 }
