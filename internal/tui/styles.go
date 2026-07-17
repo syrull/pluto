@@ -74,6 +74,7 @@ var (
 	styleStatusCtx     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	styleStatusMouse   = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 	styleStatusLearn   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	styleStatusGoal    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	styleStatusGit     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	styleStatusCwd     = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	styleStatusAttach  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
