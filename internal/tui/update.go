@@ -656,9 +656,24 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			// The input stays live during generation: a plain message is queued
-			// to steer the running turn; slash commands wait until it's idle.
+			// to steer the running turn; background-safe slash commands dispatch
+			// immediately, and the rest wait until it's idle.
 			if m.busy {
 				if strings.HasPrefix(in, "/") {
+					// A few commands act on TUI/gate state without touching the
+					// running turn (e.g. /gh, /auto), so they're dispatched in the
+					// background instead of being deferred; the rest still wait.
+					if runsInBackground(in) {
+						debug.Info(dbgTUI, "background command while busy", "cmd", strings.Fields(in)[0])
+						m.input.Reset()
+						status, cmd := m.handleCommand(in)
+						if status != "" {
+							m.pushText(status)
+						}
+						m.syncViewport()
+						return m, cmd
+					}
+					debug.Debug(dbgTUI, "command deferred while busy", "cmd", strings.Fields(in)[0])
 					m.pushText(styleErr.Render("✗ commands are unavailable while the agent is working"))
 					m.syncViewport()
 					return m, nil

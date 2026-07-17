@@ -23,6 +23,26 @@ var slashCommands = []widgets.Command{
 	{Name: "/image", Args: "<path>", Desc: "attach an image to your next message"},
 }
 
+// backgroundCommands are the slash commands safe to run while the agent is
+// working: they act on TUI state or the review gate (thread-safe) without
+// touching the running turn's transcript, so they're dispatched instead of
+// rejected. Every entry must also appear in slashCommands (guarded by
+// TestBackgroundCommandsAreRegistered). All other commands wait until idle.
+var backgroundCommands = map[string]bool{
+	"/gh":   true, // opens the GitHub browser; never enters the conversation
+	"/auto": true, // toggles the judge/review gate, which is concurrency-safe
+}
+
+// runsInBackground reports whether the slash-command line may be dispatched
+// while the agent is busy rather than deferred until the turn finishes.
+func runsInBackground(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	return backgroundCommands[fields[0]]
+}
+
 // cmdMenuStyle styles the slash-command autocomplete popup: magenta command
 // names tied to the '/' prompt, dim descriptions, and a magenta-bordered box.
 func cmdMenuStyle() widgets.ListStyle {
