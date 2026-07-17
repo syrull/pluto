@@ -107,7 +107,7 @@ func humanBytes(n int) string {
 }
 
 // attachmentChip renders a compact indicator of staged/sent image attachments,
-// e.g. "📎 diagram.png" or "📎 2 images".
+// e.g. "▤ diagram.png" or "▤ 2 images".
 func attachmentChip(atts []llm.Attachment) string {
 	if len(atts) == 0 {
 		return ""
@@ -117,7 +117,7 @@ func attachmentChip(atts []llm.Attachment) string {
 		if name == "" {
 			name = "image"
 		}
-		return "📎 " + name
+		return "▤ " + name
 	}
-	return fmt.Sprintf("📎 %d images", len(atts))
+	return fmt.Sprintf("▤ %d images", len(atts))
 }

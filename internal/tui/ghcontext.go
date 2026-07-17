@@ -166,7 +166,7 @@ func composeWithGHContext(items []ghContextItem, input string) string {
 }
 
 // ghContextChip renders a compact indicator of staged context, e.g.
-// "🔗 context #24, PR #12".
+// "§ context #24, PR #12".
 func ghContextChip(items []ghContextItem) string {
 	if len(items) == 0 {
 		return ""
@@ -179,5 +179,5 @@ func ghContextChip(items []ghContextItem) string {
 			labels[i] = fmt.Sprintf("#%d", item.Number)
 		}
 	}
-	return "🔗 context " + strings.Join(labels, ", ")
+	return "§ context " + strings.Join(labels, ", ")
 }

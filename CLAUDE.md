@@ -31,6 +31,18 @@ graphical bug. A feature that isn't observable in that log is incomplete.
 - Cover the instrumentation with tests where practical (level/component filtering
   and redaction have precedent in `internal/debug` and `internal/tui`).
 
+## No emoji
+
+NEVER put emoji in code, output, TUI text, comments, commit messages, or docs.
+Always use a monochrome, terminal-native Unicode glyph instead.
+
+- Emoji render inconsistently across terminals, break column-width math, and
+  clash with the TUI aesthetic — treat them as forbidden, no exceptions.
+- Reuse the glyph vocabulary already in the TUI: `✓` success, `✗` failure,
+  `⚠` warning, `⎇` git branch, `§` referenced context, `▤` image attachment,
+  `●` busy, `▸` selection. Pick a single-width glyph in the same spirit for
+  anything new.
+
 ## Comments
 
 Keep comments minimal. Only write what is essential.
