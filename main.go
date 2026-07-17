@@ -14,7 +14,6 @@ import (
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/auth"
 	"github.com/syrull/pluto/internal/debug"
-	"github.com/syrull/pluto/internal/goal"
 	"github.com/syrull/pluto/internal/judge"
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/llm/anthropic"
@@ -128,11 +127,6 @@ func main() {
 	// (agent auto-labeling); nil when it can't authenticate.
 	summarizer, summarizerProvider := buildSummarizer()
 
-	// The /goal completion evaluator: a small, fast, transcript-only model that
-	// judges the user's condition after each turn. nil when disabled (PLUTO_GOAL=off)
-	// or it can't authenticate — /goal then degrades with a clear message.
-	evaluator, evaluatorProvider := buildEvaluator()
-
 	// approver is the shared human-in-the-loop hook: when the judge errors, the
 	// gate defers to it instead of silently applying OnJudgeError. It bridges the
 	// blocking agent goroutine to the TUI prompt (see tui.Approver).
@@ -155,8 +149,8 @@ func main() {
 	// model: the judge and summarizer cache their own token, so without this a
 	// re-login leaves the judge on an expired token and the fail-safe policy
 	// blocks every command for the rest of the session.
-	loginHook := buildLoginHook(ag, auxReauthers(judgeProvider, summarizerProvider, evaluatorProvider)...)
-	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator).Run(); err != nil {
+	loginHook := buildLoginHook(ag, auxReauthers(judgeProvider, summarizerProvider)...)
+	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
@@ -200,17 +194,10 @@ func logConfig(provider llm.Provider, gate agent.Gate) {
 			judgeName = c.JudgeName()
 		}
 	}
-	goalState := "on"
-	if !goalEnabled() {
-		goalState = "off"
-	}
 	debug.Info("lifecycle", "effective config",
 		"provider", provider.Name(),
 		"model", defaultModel(),
 		"judge_model", judgeModel(),
-		"goal", goalState,
-		"goal_model", goalModel(),
-		"goal_max_turns", os.Getenv("PLUTO_GOAL_MAX_TURNS"),
 		"context_limit", contextLimit(),
 		"auto", auto,
 		"judge", judgeName,
@@ -376,45 +363,6 @@ func judgeModel() string {
 		return m
 	}
 	return anthropic.DefaultJudgeModel
-}
-
-// goalModel picks the /goal completion evaluator's model: PLUTO_GOAL_MODEL, else
-// the judge model (which itself defaults to the small, fast DefaultJudgeModel).
-func goalModel() string {
-	if m := os.Getenv("PLUTO_GOAL_MODEL"); m != "" {
-		return m
-	}
-	return judgeModel()
-}
-
-// goalEnabled reports whether /goal is active. PLUTO_GOAL=off disables it
-// (mirroring PLUTO_AUTO), otherwise it is on.
-func goalEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("PLUTO_GOAL"))) {
-	case "off", "0", "false", "no":
-		return false
-	}
-	return true
-}
-
-// buildEvaluator builds the cheap, transcript-only /goal completion evaluator and
-// returns its Anthropic provider so /login can re-authenticate it alongside the
-// main model. Both are nil when PLUTO_GOAL=off or the evaluator model can't
-// authenticate — /goal then reports that it is unavailable rather than silently
-// doing nothing. Web search and extended thinking are disabled to keep it fast.
-func buildEvaluator() (goal.Evaluator, *anthropic.Provider) {
-	if !goalEnabled() {
-		return nil, nil
-	}
-	model := goalModel()
-	p, err := anthropic.New(model)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "pluto: /goal unavailable, evaluator could not authenticate:", err)
-		return nil, nil
-	}
-	p.SetWebSearchMaxUses(0)
-	p.SetThinkLevel(llm.ThinkNone)
-	return goal.NewLLM(p), p
 }
 
 // contextLimit reads PLUTO_CONTEXT_LIMIT (approx tokens of transcript to re-send

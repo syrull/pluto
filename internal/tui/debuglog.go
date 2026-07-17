@@ -35,8 +35,6 @@ func msgSummary(msg tea.Msg) (string, []any) {
 		return "agent-event", []any{"kind", m.Kind, "tool", m.Tool, "id", m.id, "chars", len(m.Text)}
 	case doneMsg:
 		return "agent-done", []any{"id", m.id}
-	case goalEvalMsg:
-		return "goal-eval", []any{"id", m.id, "met", m.met, "err", errStr(m.err)}
 	case approvalReqMsg:
 		return "approval-req", []any{"tool", m.req.call.Name, "source", m.req.rr.Source}
 	case labelMsg:

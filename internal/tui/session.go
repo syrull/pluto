@@ -28,37 +28,21 @@ func (m *model) sessionStore() (*session.Store, error) {
 }
 
 // sessionAgents snapshots every workspace (or the single agent in the bare/test
-// model) into the persisted agent shape. Only an active (non-achieved) goal's
-// condition is recorded; the active workspace's live goal is read from m.goal
-// since it can diverge from the stashed copy until the next stash.
+// model) into the persisted agent shape.
 func (m *model) sessionAgents() []session.Agent {
 	if len(m.workspaces) == 0 {
-		return []session.Agent{{Messages: m.agent.Snapshot(), Goal: persistedGoal(m.goal)}}
+		return []session.Agent{{Messages: m.agent.Snapshot()}}
 	}
 	agents := make([]session.Agent, 0, len(m.workspaces))
-	for i, w := range m.workspaces {
-		g := w.goal
-		if i == m.active {
-			g = m.goal
-		}
+	for _, w := range m.workspaces {
 		agents = append(agents, session.Agent{
 			Label:    w.label,
 			Cwd:      w.cwd,
 			Worktree: w.worktree,
-			Goal:     persistedGoal(g),
 			Messages: w.agent.Snapshot(),
 		})
 	}
 	return agents
-}
-
-// persistedGoal returns the condition to save for a goal: an active or paused
-// goal is kept so it resumes; an achieved/cleared one (or nil) records nothing.
-func persistedGoal(g *goalState) string {
-	if g == nil || g.achieved {
-		return ""
-	}
-	return g.condition
 }
 
 // anyConversation reports whether any agent holds a real conversation.
@@ -167,7 +151,6 @@ func (m *model) resume(id string) tea.Cmd {
 		m.history = historyFromMessages(a.Messages)
 		m.histPos = len(m.history)
 		debug.Debug(dbgTUI, "resume recall history", "mode", "single", "entries", len(m.history))
-		g := goalFromSaved(a.Goal)
 		if w := m.workspaceAt(m.active); w != nil {
 			if a.Cwd != "" {
 				w.cwd = a.Cwd
@@ -175,11 +158,6 @@ func (m *model) resume(id string) tea.Cmd {
 			w.worktree = a.Worktree
 			w.label = a.Label
 			w.labeled = strings.TrimSpace(a.Label) != ""
-			w.goal = g
-		}
-		m.goal = g
-		if g != nil {
-			debug.Info(dbgGoal, "set", "condition_len", len([]rune(g.condition)), "turns_cap", m.goalMaxTurns, "source", "resume")
 		}
 		m.sessionName = sess.ID
 		m.notice = "✓ resumed " + sess.ID
@@ -209,7 +187,6 @@ func (m *model) restoreAgents(agents []session.Agent, active int) {
 			label:    a.Label,
 			labeled:  strings.TrimSpace(a.Label) != "",
 			agent:    ag,
-			goal:     goalFromSaved(a.Goal),
 			showHome: !hasConversation(a.Messages),
 			history:  hist,
 			histPos:  len(hist),

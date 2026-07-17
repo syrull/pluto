@@ -44,15 +44,11 @@ type Session struct {
 }
 
 // Agent is one persisted conversation within a multi-agent session: its
-// transcript plus the working directory and label that identify it. Goal holds an
-// active /goal completion condition (omitted when there is none or it was already
-// achieved); its turn/timer/token counters are not persisted — they reset on
-// resume, matching upstream.
+// transcript plus the working directory and label that identify it.
 type Agent struct {
 	Label    string        `json:"label,omitempty"`
 	Cwd      string        `json:"cwd,omitempty"`
 	Worktree bool          `json:"worktree,omitempty"`
-	Goal     string        `json:"goal,omitempty"`
 	Messages []llm.Message `json:"messages"`
 }
 

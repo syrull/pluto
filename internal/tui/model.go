@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
@@ -14,7 +13,6 @@ import (
 	"github.com/charmbracelet/glamour"
 
 	"github.com/syrull/pluto/internal/agent"
-	"github.com/syrull/pluto/internal/goal"
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
@@ -70,27 +68,6 @@ type entry struct {
 	outputID int
 	copyID   int
 }
-
-// goalState tracks a /goal completion condition and the evaluator-driven turn
-// loop working toward it, on a single workspace (pluto's "one goal per session"
-// becomes one goal per agent). A nil *goalState means no goal. A goal is active
-// (loop running, chip shown, evaluated after each turn) while it is neither
-// achieved nor paused; it is paused after an interrupt or an evaluator error so
-// the loop stops but the condition stays inspectable via /goal.
-type goalState struct {
-	condition  string    // the user's completion condition
-	startedAt  time.Time // when the goal was set (turn/timer baseline)
-	turns      int       // agent turns completed under the goal (evaluator rounds)
-	tokens     int       // cumulative input+output tokens spent under the goal
-	lastReason string    // most recent evaluator reason (or pause/error note)
-	paused     bool      // loop stopped (interrupt or evaluator error), goal kept
-	achieved   bool      // condition met and goal cleared (kept for status)
-	achievedAt time.Time // when the condition was met
-}
-
-// active reports whether the goal loop should run: a real goal that is neither
-// achieved nor paused.
-func (g *goalState) active() bool { return g != nil && !g.achieved && !g.paused }
 
 type model struct {
 	agent     *agent.Agent
@@ -207,14 +184,6 @@ type model struct {
 	approver *Approver
 	approval *approvalRequest
 
-	// goal mirrors the active workspace's /goal state (nil ⇒ no goal); evaluator
-	// is the small transcript-only model that judges the completion condition
-	// after each turn (nil ⇒ /goal unavailable). goalMaxTurns is the optional
-	// PLUTO_GOAL_MAX_TURNS safety valve (0 ⇒ unlimited).
-	goal         *goalState
-	evaluator    goal.Evaluator
-	goalMaxTurns int
-
 	// workspaces are the parallel agents. The model's per-agent fields above mirror
 	// the active workspace (workspaces[active]); background workspaces keep their
 	// own copy, kept in sync via stash/unstash. newAgent builds a fresh agent for a
@@ -254,7 +223,6 @@ type workspace struct {
 	events chan eventMsg
 	cancel context.CancelFunc
 	unread bool // background progress since last viewed
-	goal   *goalState
 
 	showHome    bool
 	git         gitInfo
@@ -358,9 +326,8 @@ func (m model) inputView() string {
 // builds a fresh agent for each spawned workspace (same provider/tools/config);
 // summarize is an optional one-shot auto-labeler (nil ⇒ derive labels locally);
 // approver is the shared human-in-the-loop hook for judge-error approvals (nil ⇒
-// no interactive approval); evaluator drives the /goal completion loop (nil ⇒
-// /goal degrades with a clear message).
-func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook, approver *Approver, evaluator goal.Evaluator) *tea.Program {
+// no interactive approval).
+func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook, approver *Approver) *tea.Program {
 	cwd, _ := os.Getwd()
 	ws := &workspace{id: 0, cwd: cwd, agent: a, showHome: true}
 	m := model{
@@ -368,7 +335,6 @@ func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Co
 		mouse: mouseEnabled(), showHome: true, tip: pickTip(),
 		workspaces: []*workspace{ws}, active: 0, nextID: 1,
 		newAgent: newAgent, summarize: summarize, approver: approver,
-		evaluator: evaluator, goalMaxTurns: goalMaxTurns(),
 	}
 	return tea.NewProgram(m)
 }

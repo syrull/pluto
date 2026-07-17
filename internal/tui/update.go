@@ -80,27 +80,14 @@ func (m *model) applyEvent(ev agent.Event) tea.Cmd {
 // interrupt aborts the in-flight Run: it cancels the request context (stopping
 // the LLM stream and any running tool) and drops any queued steering so the
 // canceled turn doesn't immediately restart. The pending listener delivers
-// doneMsg once the run unwinds, which clears busy. An active goal loop is paused
-// (not cleared) so the canceled turn doesn't restart it, while the condition
-// stays inspectable via /goal.
+// doneMsg once the run unwinds, which clears busy.
 func (m *model) interrupt() {
 	debug.Info(dbgTUI, "interrupt", "id", m.activeID())
-	running := m.cancel != nil
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
 	}
 	m.agent.TakeSteering()
-	if m.goal.active() {
-		m.goal.paused = true
-		m.goal.lastReason = "interrupted"
-		debug.Info(dbgGoal, "cleared", "reason", "interrupt", "turns", m.goal.turns)
-		// During the evaluate phase there is no Run to unwind (no doneMsg will
-		// clear busy), so drop busy now; a pending verdict is ignored on arrival.
-		if !running {
-			m.busy = false
-		}
-	}
 	m.notice = "✗ canceled request"
 }
 
@@ -153,14 +140,9 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		m.streamText = ""
 		m.streamThink = ""
 		m.sessionName = ""
-		if m.goal != nil {
-			debug.Info(dbgGoal, "cleared", "reason", "new")
-		}
-		m.goal = nil
 		if w := m.workspaceAt(m.active); w != nil {
 			w.label = ""
 			w.labeled = false
-			w.goal = nil
 		}
 		m.showHome = true
 		m.orbitEpoch++
@@ -328,9 +310,6 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		default:
 			return styleErr.Render("✗ usage: /auto [on|off]"), nil
 		}
-
-	case "/goal":
-		return m.handleGoalCommand(line)
 
 	case "/learn":
 		if len(fields) > 1 {
@@ -804,15 +783,7 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Autosave before any restarted goroutine so Snapshot never races Run.
 			m.autosave()
 			if len(pending) > 0 {
-				// Steering takes priority; the goal loop resumes after that turn.
-				if m.goal.active() {
-					debug.Debug(dbgGoal, "turn done", "outcome", "skipped", "reason", "steering")
-				}
 				cmd = tea.Batch(cmd, m.restartSteering(pending))
-				return m, cmd
-			}
-			if gc := m.maybeContinueGoal(); gc != nil {
-				cmd = tea.Batch(cmd, gc)
 			}
 			return m, cmd
 		case i < 0:
@@ -826,46 +797,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// and before restartSteering starts the follow-up run's goroutine.
 			m.autosave()
 			if len(pending) > 0 {
-				if m.workspaces[i].goal.active() {
-					debug.Debug(dbgGoal, "turn done", "outcome", "skipped", "reason", "steering", "id", msg.id)
-				}
 				var rcmd tea.Cmd
 				m.onWorkspace(i, func() { rcmd = m.restartSteering(pending) })
-				return m, tea.Batch(cmd, rcmd)
-			}
-			// Advance the background workspace's goal loop under its own context.
-			var gc tea.Cmd
-			m.onWorkspace(i, func() { gc = m.maybeContinueGoal() })
-			if gc != nil {
-				cmd = tea.Batch(cmd, gc)
+				cmd = tea.Batch(cmd, rcmd)
 			}
 			return m, cmd
-		}
-	case goalEvalMsg:
-		i := m.workspaceIndex(msg.id)
-		switch {
-		case len(m.workspaces) == 0, i == m.active: // bare/test model or the active agent
-			directive := m.applyGoalVerdict(msg)
-			// Autosave before the continuation goroutine so Snapshot never races Run.
-			m.autosave()
-			if directive != "" {
-				cmd := m.runAgent(directive, nil)
-				return m, cmd
-			}
-			return m, nil
-		case i < 0:
-			return m, nil
-		default:
-			var directive string
-			m.onWorkspace(i, func() { directive = m.applyGoalVerdict(msg) })
-			m.workspaces[i].unread = true
-			m.autosave()
-			if directive != "" {
-				var cmd tea.Cmd
-				m.onWorkspace(i, func() { cmd = m.runAgent(directive, nil) })
-				return m, cmd
-			}
-			return m, nil
 		}
 	case loginDoneMsg:
 		m.busy = false

@@ -82,7 +82,6 @@ func (m *model) stash(i int) {
 	w.busy = m.busy
 	w.events = m.events
 	w.cancel = m.cancel
-	w.goal = m.goal
 	w.showHome = m.showHome
 	w.git = m.git
 	w.gitReady = m.gitReady
@@ -111,7 +110,6 @@ func (m *model) unstash(i int) {
 	m.busy = w.busy
 	m.events = w.events
 	m.cancel = w.cancel
-	m.goal = w.goal
 	m.showHome = w.showHome
 	m.git = w.git
 	m.gitReady = w.gitReady
@@ -390,14 +388,12 @@ func (m *model) resetLastAgent(label, removeErr string) tea.Cmd {
 	if w := m.workspaceAt(m.active); w != nil {
 		w.label = ""
 		w.labeled = false
-		w.goal = nil
 		if w.cwd == "" {
 			if d, err := os.Getwd(); err == nil {
 				w.cwd = d
 			}
 		}
 	}
-	m.goal = nil
 	m.agent.Reset()
 	m.lines = nil
 	m.outputs = nil
