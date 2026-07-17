@@ -61,6 +61,32 @@ func TestSaveResumePreservesAttachments(t *testing.T) {
 	}
 }
 
+func TestSaveResumePreservesAgentGoal(t *testing.T) {
+	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
+	store, err := Open()
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	in := &Session{ID: "with-goal", Agents: []Agent{
+		{Cwd: "/w", Goal: "all tests in ./... pass", Messages: []llm.Message{{Role: llm.RoleUser, Content: "go"}}},
+		{Cwd: "/x", Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}},
+	}}
+	if err := store.Save(in); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := store.Load("with-goal")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Agents[0].Goal != "all tests in ./... pass" {
+		t.Fatalf("agent 0 goal = %q, want the saved condition", got.Agents[0].Goal)
+	}
+	if got.Agents[1].Goal != "" {
+		t.Fatalf("agent 1 goal = %q, want empty (omitempty)", got.Agents[1].Goal)
+	}
+}
+
 func TestSaveResumeRoundTrip(t *testing.T) {
 	t.Setenv("PLUTO_SESSIONS_DIR", t.TempDir())
 	store, err := Open()

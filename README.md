@@ -93,6 +93,49 @@ Only a *judge error* triggers the prompt — a guard block or an explicit judge
 (a background or headless run), pluto falls back to the non-interactive policy set
 by `PLUTO_AUTO_ON_JUDGE_ERR` (`block` by default, `allow` to fail open).
 
+## Goals (keep working until a condition is met)
+
+Normally the agent stops when *it* decides the work is done. `/goal <condition>`
+flips that around: it sets a **completion condition** and keeps the active agent
+working across turns — without you re-typing "continue" — until a **separate,
+small, fast evaluator model** (Haiku by default) judges the condition met.
+
+```
+/goal all tests under ./internal/tui pass
+```
+
+After every turn, the condition plus the conversation so far go to the evaluator,
+which returns a **yes/no** decision and a short reason. A **no** starts another
+turn automatically and feeds the reason back as guidance; a **yes** clears the
+goal and records an *achieved* entry. The evaluator has **no tools** — it can't
+run commands or read files, it only judges what the agent has **surfaced in the
+transcript**. So phrase the condition as something the agent's own output can
+demonstrate (test output landing in the transcript works; "the code is correct"
+does not).
+
+There is **one goal per agent**. The same command sets, inspects, and clears:
+
+- `/goal <condition>` — set/replace and start a turn immediately (max 4,000 chars).
+- `/goal` — show status: condition, elapsed time, turns, tokens, and the last
+  evaluator reason.
+- `/goal clear` — clear early (aliases: `stop`, `off`, `reset`, `none`, `cancel`).
+
+A `◎ goal <elapsed>` chip shows on the status line while a goal is active.
+Pressing `esc` (or `ctrl+c`) **pauses** the loop, and `/new` clears the goal.
+If the evaluator itself errors, the loop **pauses** (rather than spinning) and
+keeps the goal so you can inspect it with `/goal` and retry.
+
+`/goal` doesn't change permissions — it removes per-*turn* prompts, while auto
+mode removes per-*tool* prompts. Pair them (`/auto on` + `/goal …`) for an
+unattended run to completion. An active goal is restored on `/resume` (its
+turn/timer/token counters reset); achieved goals are not.
+
+By default a goal runs until met or interrupted (no built-in budget) — either
+bake a turn/time cap into the condition text, or set `PLUTO_GOAL_MAX_TURNS` to a
+positive number to pause the loop after that many turns. `PLUTO_GOAL_MODEL`
+overrides the evaluator model (default: the judge model), and `PLUTO_GOAL=off`
+disables the feature.
+
 ## Debugging
 
 Pluto can record a structured, timestamped log of *everything* that happens in a

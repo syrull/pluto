@@ -321,6 +321,10 @@ func (m model) modelStatus() string {
 		}
 	}
 
+	if chip, raw := goalChip(m.goal); raw != "" {
+		add(chip, raw)
+	}
+
 	if m.mouse {
 		add(styleStatusMouse.Render("mouse: on"), "mouse: on")
 	}
