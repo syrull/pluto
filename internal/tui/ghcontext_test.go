@@ -13,9 +13,9 @@ import (
 
 func TestToggleGHContextAddsAndRemoves(t *testing.T) {
 	m := &model{}
-	is := ghIssue{Number: 24, Title: "first"}
+	issue := issueContext(ghIssue{Number: 24, Title: "first"})
 
-	m.toggleGHContext(is)
+	m.toggleGHContext(issue)
 	if len(m.ghContext) != 1 || m.ghContext[0].Number != 24 {
 		t.Fatalf("issue #24 should be staged, got %+v", m.ghContext)
 	}
@@ -23,36 +23,49 @@ func TestToggleGHContextAddsAndRemoves(t *testing.T) {
 		t.Fatalf("add should surface a notice, got %q", m.notice)
 	}
 
-	m.toggleGHContext(ghIssue{Number: 25, Title: "second"})
+	m.toggleGHContext(prContext(ghPR{Number: 12, Title: "the pr"}))
 	if len(m.ghContext) != 2 {
-		t.Fatalf("a second issue should stack, got %+v", m.ghContext)
+		t.Fatalf("a PR should stack alongside the issue, got %+v", m.ghContext)
+	}
+	if !strings.Contains(m.notice, "added PR #12") {
+		t.Fatalf("adding a PR should name it, got %q", m.notice)
 	}
 
-	m.toggleGHContext(is) // toggle #24 back off
-	if len(m.ghContext) != 1 || m.ghContext[0].Number != 25 {
-		t.Fatalf("re-adding #24 should remove it, got %+v", m.ghContext)
+	m.toggleGHContext(issue) // toggle issue #24 back off
+	if len(m.ghContext) != 1 || !m.ghContext[0].PR || m.ghContext[0].Number != 12 {
+		t.Fatalf("re-adding issue #24 should remove only it, got %+v", m.ghContext)
 	}
 	if !strings.Contains(m.notice, "removed issue #24") {
 		t.Fatalf("remove should surface a notice, got %q", m.notice)
 	}
 }
 
+func TestToggleGHContextIssueAndPRSameNumberDistinct(t *testing.T) {
+	m := &model{}
+	m.toggleGHContext(issueContext(ghIssue{Number: 12, Title: "issue twelve"}))
+	m.toggleGHContext(prContext(ghPR{Number: 12, Title: "pr twelve"}))
+	if len(m.ghContext) != 2 {
+		t.Fatalf("issue #12 and PR #12 should both stage, got %+v", m.ghContext)
+	}
+}
+
 func TestTakeGHContextClears(t *testing.T) {
-	m := &model{ghContext: []ghIssue{{Number: 24}, {Number: 25}}}
+	m := &model{ghContext: []ghContextItem{{Number: 24}, {PR: true, Number: 12}}}
 	got := m.takeGHContext()
 	if len(got) != 2 {
-		t.Fatalf("take should return both issues, got %+v", got)
+		t.Fatalf("take should return both items, got %+v", got)
 	}
 	if len(m.ghContext) != 0 {
 		t.Fatalf("take should clear staged context, got %+v", m.ghContext)
 	}
 }
 
-func TestGHContextNumbers(t *testing.T) {
-	m := &model{ghContext: []ghIssue{{Number: 7}, {Number: 42}}}
-	nums := m.ghContextNumbers()
-	if len(nums) != 2 || nums[0] != 7 || nums[1] != 42 {
-		t.Fatalf("numbers = %v, want [7 42]", nums)
+func TestGHContextRefs(t *testing.T) {
+	m := &model{ghContext: []ghContextItem{{Number: 7}, {PR: true, Number: 42}}}
+	refs := m.ghContextRefs()
+	want := []ghRef{{num: 7}, {pr: true, num: 42}}
+	if len(refs) != 2 || refs[0] != want[0] || refs[1] != want[1] {
+		t.Fatalf("refs = %v, want %v", refs, want)
 	}
 }
 
@@ -61,26 +74,29 @@ func TestComposeWithGHContext(t *testing.T) {
 		t.Fatalf("no context should pass input through, got %q", got)
 	}
 
-	issues := []ghIssue{
+	items := []ghContextItem{
 		{Number: 24, Title: "bug in parser", State: "OPEN", Author: "me", Body: "steps to repro"},
-		{Number: 25, Title: "second"},
+		{PR: true, Number: 12, Title: "the fix", Branch: "fix-24", Body: "diff summary"},
 	}
-	got := composeWithGHContext(issues, "please fix these")
-	for _, want := range []string{"Issue #24: bug in parser", "steps to repro", "Issue #25: second", "please fix these"} {
+	got := composeWithGHContext(items, "please review")
+	for _, want := range []string{
+		"Issue #24: bug in parser", "steps to repro",
+		"Pull Request #12: the fix", "branch fix-24", "diff summary", "please review",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("composed prompt missing %q:\n%s", want, got)
 		}
 	}
 	// The user's message comes after the attached context block.
-	if strings.Index(got, "Issue #24") > strings.Index(got, "please fix these") {
+	if strings.Index(got, "Issue #24") > strings.Index(got, "please review") {
 		t.Fatalf("context should precede the user message:\n%s", got)
 	}
 }
 
 func TestComposeWithGHContextEmptyInput(t *testing.T) {
-	got := composeWithGHContext([]ghIssue{{Number: 24, Title: "t"}}, "")
-	if !strings.Contains(got, "Issue #24") {
-		t.Fatalf("context-only turn should still carry the issue:\n%s", got)
+	got := composeWithGHContext([]ghContextItem{{PR: true, Number: 12, Title: "t"}}, "")
+	if !strings.Contains(got, "Pull Request #12") {
+		t.Fatalf("context-only turn should still carry the PR:\n%s", got)
 	}
 	if strings.HasSuffix(got, "\n") {
 		t.Fatalf("context-only prompt should be trimmed, got %q", got)
@@ -89,30 +105,30 @@ func TestComposeWithGHContextEmptyInput(t *testing.T) {
 
 func TestGHContextChip(t *testing.T) {
 	if ghContextChip(nil) != "" {
-		t.Fatal("no issues should render no chip")
+		t.Fatal("no items should render no chip")
 	}
-	chip := ghContextChip([]ghIssue{{Number: 24}, {Number: 25}})
-	if !strings.Contains(chip, "#24") || !strings.Contains(chip, "#25") {
-		t.Fatalf("chip should list both issue numbers, got %q", chip)
+	chip := ghContextChip([]ghContextItem{{Number: 24}, {PR: true, Number: 12}})
+	if !strings.Contains(chip, "#24") || !strings.Contains(chip, "PR #12") {
+		t.Fatalf("chip should list the issue and PR, got %q", chip)
 	}
 }
 
 func TestRenderUserLineShowsContextChip(t *testing.T) {
 	m := &model{md: newRenderer(80), width: 80}
-	line := m.renderUserLine("fix these", nil, []ghIssue{{Number: 24}})
-	if !strings.Contains(line, "#24") {
+	line := m.renderUserLine("fix these", nil, []ghContextItem{{Number: 24}, {PR: true, Number: 12}})
+	if !strings.Contains(line, "#24") || !strings.Contains(line, "PR #12") {
 		t.Fatalf("user line should include the context chip, got:\n%s", line)
 	}
 }
 
 func TestApplyGHOutcomeAddContextKeepsBrowserOpen(t *testing.T) {
 	m := &model{ghm: newGHModal()}
-	m.applyGHOutcome(ghOutcome{kind: ghOutcomeAddContext, issue: ghIssue{Number: 24, Title: "bug"}})
-	if len(m.ghContext) != 1 || m.ghContext[0].Number != 24 {
-		t.Fatalf("add-context outcome should stage the issue, got %+v", m.ghContext)
+	m.applyGHOutcome(ghOutcome{kind: ghOutcomeAddContext, ctx: prContext(ghPR{Number: 12, Title: "pr"})})
+	if len(m.ghContext) != 1 || !m.ghContext[0].PR || m.ghContext[0].Number != 12 {
+		t.Fatalf("add-context outcome should stage the PR, got %+v", m.ghContext)
 	}
 	if m.ghm == nil {
-		t.Fatal("adding context should keep the browser open for more issues")
+		t.Fatal("adding context should keep the browser open for more items")
 	}
 }
 
@@ -120,11 +136,11 @@ func TestSubmitSendsAndClearsGHContext(t *testing.T) {
 	ag := agent.New(llm.Stub{}, tool.NewRegistry(), "")
 	var tm tea.Model = model{
 		agent: ag, md: newRenderer(80), input: newInput(80),
-		ghContext: []ghIssue{{Number: 24, Title: "parser bug", Body: "repro steps"}},
+		ghContext: []ghContextItem{{PR: true, Number: 12, Title: "the fix", Body: "diff"}},
 	}
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	for _, r := range "please fix" {
+	for _, r := range "please review" {
 		tm, _ = tm.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 	tm, _ = tm.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -136,7 +152,7 @@ func TestSubmitSendsAndClearsGHContext(t *testing.T) {
 	if !got.busy {
 		t.Fatal("submitting a message should start a run")
 	}
-	if joined := got.transcript(); !strings.Contains(joined, "#24") {
+	if joined := got.transcript(); !strings.Contains(joined, "PR #12") {
 		t.Fatalf("transcript should show the context chip, got:\n%s", joined)
 	}
 }

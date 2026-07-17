@@ -240,10 +240,10 @@ func TestGHModalAddToContext(t *testing.T) {
 	}
 
 	handled, out := g.handleKey("a")
-	if !handled || out.kind != ghOutcomeAddContext || out.issue.Number != 24 {
+	if !handled || out.kind != ghOutcomeAddContext || out.ctx.PR || out.ctx.Number != 24 {
 		t.Fatalf("a should add issue #24 to context, got %+v", out)
 	}
-	if !g.added[24] {
+	if !g.added[ghRef{num: 24}] {
 		t.Fatal("a should mark issue #24 as added")
 	}
 	if !strings.Contains(g.detailView(g.contentWidth()), "In context") {
@@ -252,8 +252,8 @@ func TestGHModalAddToContext(t *testing.T) {
 
 	// Pressing a again toggles it back off.
 	_, out = g.handleKey("a")
-	if out.kind != ghOutcomeAddContext || g.added[24] {
-		t.Fatalf("second a should toggle issue #24 off, added=%v out=%+v", g.added[24], out)
+	if out.kind != ghOutcomeAddContext || g.added[ghRef{num: 24}] {
+		t.Fatalf("second a should toggle issue #24 off, added=%v out=%+v", g.added[ghRef{num: 24}], out)
 	}
 }
 
@@ -262,20 +262,34 @@ func TestGHModalAddToContextLinkedIssue(t *testing.T) {
 	g.handleKey("down")  // move to linked issue #25
 	g.handleKey("enter") // open detail
 	_, out := g.handleKey("a")
-	if out.kind != ghOutcomeAddContext || out.issue.Number != 25 {
+	if out.kind != ghOutcomeAddContext || out.ctx.PR || out.ctx.Number != 25 {
 		t.Fatalf("a on a linked issue should still add it, got %+v", out)
 	}
 }
 
-func TestGHModalAddContextNotOfferedForPR(t *testing.T) {
+func TestGHModalAddToContextPR(t *testing.T) {
 	g := sampleGHModal()
 	g.handleKey("tab")   // PRs tab
-	g.handleKey("enter") // open PR detail
-	if _, out := g.handleKey("a"); out.kind != ghOutcomeNone {
-		t.Fatalf("a on a PR should do nothing, got %v", out.kind)
+	g.handleKey("enter") // open PR #12 detail
+	if !strings.Contains(g.detailView(g.contentWidth()), "Add to Context") {
+		t.Fatal("PR detail should offer the Add to Context button")
 	}
-	if strings.Contains(g.detailView(g.contentWidth()), "Add to Context") {
-		t.Fatal("PR detail should not offer the Add to Context button")
+
+	handled, out := g.handleKey("a")
+	if !handled || out.kind != ghOutcomeAddContext || !out.ctx.PR || out.ctx.Number != 12 {
+		t.Fatalf("a should add PR #12 to context, got %+v", out)
+	}
+	if !g.added[ghRef{pr: true, num: 12}] {
+		t.Fatal("a should mark PR #12 as added")
+	}
+	if !strings.Contains(g.detailView(g.contentWidth()), "In context") {
+		t.Fatal("an added PR should show the In context button")
+	}
+
+	// Pressing a again toggles it back off.
+	_, out = g.handleKey("a")
+	if out.kind != ghOutcomeAddContext || g.added[ghRef{pr: true, num: 12}] {
+		t.Fatalf("second a should toggle PR #12 off, added=%v out=%+v", g.added[ghRef{pr: true, num: 12}], out)
 	}
 }
 
@@ -283,11 +297,24 @@ func TestGHModalIssueActionsPackWithinWidth(t *testing.T) {
 	g := sampleGHModal()
 	g.SetSize(80, 30) // narrow: the four issue actions can't fit one row
 	g.handleKey("enter")
+	assertDetailFits(t, g)
+}
+
+func TestGHModalPRActionsPackWithinWidth(t *testing.T) {
+	g := sampleGHModal()
+	g.SetSize(80, 30) // narrow: the four PR actions can't fit one row
+	g.handleKey("tab")
+	g.handleKey("enter")
+	assertDetailFits(t, g)
+}
+
+func assertDetailFits(t *testing.T, g *ghModal) {
+	t.Helper()
 	cw := g.contentWidth()
 	lines := strings.Split(g.detailView(cw), "\n")
 	for i, ln := range lines {
 		if w := lipgloss.Width(ln); w > cw {
-			t.Fatalf("issue detail line %d width %d exceeds contentWidth %d", i, w, cw)
+			t.Fatalf("detail line %d width %d exceeds contentWidth %d", i, w, cw)
 		}
 	}
 	if got := len(lines); got != g.boxHeight() {
@@ -297,10 +324,18 @@ func TestGHModalIssueActionsPackWithinWidth(t *testing.T) {
 
 func TestGHModalSetContextSeedsButton(t *testing.T) {
 	g := sampleGHModal()
-	g.SetContext([]int{24})
+	g.SetContext([]ghRef{{num: 24}, {pr: true, num: 12}})
+
 	g.handleKey("enter") // open issue #24 detail
 	if !strings.Contains(g.detailView(g.contentWidth()), "In context") {
 		t.Fatal("a pre-staged issue should open showing the In context button")
+	}
+
+	g.handleKey("esc")
+	g.handleKey("tab")   // PRs tab
+	g.handleKey("enter") // open PR #12 detail
+	if !strings.Contains(g.detailView(g.contentWidth()), "In context") {
+		t.Fatal("a pre-staged PR should open showing the In context button")
 	}
 }
 

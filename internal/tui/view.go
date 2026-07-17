@@ -63,8 +63,8 @@ func (m *model) renderMarkdown(src string) string {
 // renderUserLine wraps a user message to the viewport width, indenting
 // continuation lines under the prompt so multi-line input doesn't run off
 // screen, and appends chips when the turn carries image attachments or staged
-// GitHub issue context.
-func (m *model) renderUserLine(in string, atts []llm.Attachment, ctx []ghIssue) string {
+// GitHub issue/PR context.
+func (m *model) renderUserLine(in string, atts []llm.Attachment, ctx []ghContextItem) string {
 	w := m.contentWidth()
 	const prefix = "› "
 	w -= len(prefix)

@@ -47,12 +47,14 @@ const (
 )
 
 // ghOutcome tells the model what to do after a key press in the browser. For
-// ghOutcomeFetchChecks, pr.Number carries the PR whose CI status to fetch.
+// ghOutcomeFetchChecks, pr.Number carries the PR whose CI status to fetch; for
+// ghOutcomeAddContext, ctx carries the issue or PR to stage.
 type ghOutcome struct {
 	kind  ghOutcomeKind
 	url   string
 	issue ghIssue
 	pr    ghPR
+	ctx   ghContextItem
 }
 
 // ghChecks is the cached CI status for one PR.
@@ -90,26 +92,26 @@ type ghModal struct {
 	// confirmMerge arms the irreversible Merge action the same way as confirmClose.
 	confirmMerge bool
 
-	// added tracks issue numbers already staged into the message context, so the
-	// [a] action button reflects membership. Seeded from the model on open.
-	added map[int]bool
+	// added tracks issues/PRs already staged into the message context, so the [a]
+	// action button reflects membership. Seeded from the model on open.
+	added map[ghRef]bool
 
 	width, height int
 }
 
 func newGHModal() *ghModal {
 	debug.Info(dbgTUI, "github browser opened")
-	g := &ghModal{loading: true, vp: viewport.New(), checks: map[int]*ghChecks{}, added: map[int]bool{}}
+	g := &ghModal{loading: true, vp: viewport.New(), checks: map[int]*ghChecks{}, added: map[ghRef]bool{}}
 	g.vp.KeyMap = ghDetailKeyMap()
 	g.vp.FillHeight = true // pad short bodies so the modal stays full-page
 	return g
 }
 
-// SetContext seeds the set of issue numbers already staged into the message
-// context so the [a] action button opens in the right state.
-func (g *ghModal) SetContext(numbers []int) {
-	for _, n := range numbers {
-		g.added[n] = true
+// SetContext seeds the set of issues/PRs already staged into the message context
+// so the [a] action button opens in the right state.
+func (g *ghModal) SetContext(refs []ghRef) {
+	for _, r := range refs {
+		g.added[r] = true
 	}
 }
 
@@ -490,8 +492,10 @@ func (g *ghModal) detailKey(ks string) (bool, ghOutcome) {
 		}
 	case "a":
 		if is, ok := g.selectedIssue(); ok {
-			g.added[is.Number] = !g.added[is.Number]
-			return true, ghOutcome{kind: ghOutcomeAddContext, issue: is}
+			return true, g.toggleContext(issueContext(is))
+		}
+		if pr, ok := g.selectedPR(); ok {
+			return true, g.toggleContext(prContext(pr))
 		}
 	case "d":
 		if is, ok := g.selectedIssue(); ok && is.LinkedPR == 0 {
@@ -525,6 +529,13 @@ func (g *ghModal) detailKey(ks string) (bool, ghOutcome) {
 		}
 	}
 	return true, ghOutcome{}
+}
+
+// toggleContext flips an item's membership in the staged context set and returns
+// the outcome that tells the model to mirror the change.
+func (g *ghModal) toggleContext(item ghContextItem) ghOutcome {
+	g.added[item.ref()] = !g.added[item.ref()]
+	return ghOutcome{kind: ghOutcomeAddContext, ctx: item}
 }
 
 // closableIssue returns the selected issue when it is an open issue that can be
@@ -732,7 +743,8 @@ func (g *ghModal) detailView(cw int) string {
 }
 
 // actionButtons builds the action-button row for the open detail: Develop/Review
-// and Add-to-Context/Close for an issue, Review/Merge for a PR, plus Open.
+// then Add-to-Context/Close for an issue, Review then Add-to-Context/Merge for a
+// PR, plus Open.
 func (g *ghModal) actionButtons() []string {
 	var actions []string
 	if is, ok := g.selectedIssue(); ok {
@@ -741,11 +753,7 @@ func (g *ghModal) actionButtons() []string {
 		} else {
 			actions = append(actions, styleShowBtn.Render(" [d] Develop "))
 		}
-		if g.added[is.Number] {
-			actions = append(actions, styleAddBtn.Render(" [a] ✓ In context "))
-		} else {
-			actions = append(actions, styleAddBtn.Render(" [a] Add to Context "))
-		}
+		actions = append(actions, g.contextButton(ghRef{num: is.Number}))
 		if g.confirmClose {
 			actions = append(actions, styleErrBtn.Render(" [c] confirm close "))
 		} else {
@@ -753,6 +761,7 @@ func (g *ghModal) actionButtons() []string {
 		}
 	} else if pr, ok := g.selectedPR(); ok {
 		actions = append(actions, styleShowBtn.Render(" [r] Review "))
+		actions = append(actions, g.contextButton(ghRef{pr: true, num: pr.Number}))
 		switch {
 		case pr.Draft:
 			actions = append(actions, styleHint.Render(" [m] Merge (draft) "))
@@ -763,6 +772,15 @@ func (g *ghModal) actionButtons() []string {
 		}
 	}
 	return append(actions, styleCopyBtn.Render(" [o] Open in browser "))
+}
+
+// contextButton renders the [a] Add-to-Context toggle, reflecting whether the
+// referenced item is already staged.
+func (g *ghModal) contextButton(ref ghRef) string {
+	if g.added[ref] {
+		return styleAddBtn.Render(" [a] ✓ In context ")
+	}
+	return styleAddBtn.Render(" [a] Add to Context ")
 }
 
 // packButtons lays action buttons across as many lines as needed so no line

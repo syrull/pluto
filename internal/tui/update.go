@@ -337,7 +337,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 		}
 		m.ghm = newGHModal()
 		m.ghm.SetSize(m.width, m.height)
-		m.ghm.SetContext(m.ghContextNumbers())
+		m.ghm.SetContext(m.ghContextRefs())
 		return "", fetchGitHubCmd
 
 	case "/image":
@@ -1034,7 +1034,7 @@ func (m *model) applyGHOutcome(out ghOutcome) tea.Cmd {
 		openBrowser(out.url)
 		m.notice = "✓ opened " + out.url
 	case ghOutcomeAddContext:
-		m.toggleGHContext(out.issue)
+		m.toggleGHContext(out.ctx)
 	case ghOutcomeFetchChecks:
 		return fetchChecksCmd(out.pr.Number)
 	case ghOutcomeCloseIssue:

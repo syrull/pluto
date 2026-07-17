@@ -85,10 +85,10 @@ type model struct {
 	// the turn on submit, then cleared.
 	attachments []llm.Attachment
 
-	// ghContext holds GitHub issues staged (via the browser's [Add to Context]
-	// action) as reference material for the next message; prepended to the turn on
-	// submit, then cleared.
-	ghContext []ghIssue
+	// ghContext holds GitHub issues and PRs staged (via the browser's [Add to
+	// Context] action) as reference material for the next message; prepended to the
+	// turn on submit, then cleared.
+	ghContext []ghContextItem
 
 	// history records submitted inputs (oldest→newest) so ctrl+p/ctrl+n recall them
 	// like a shell prompt; histPos is the cursor into it, where histPos == len(history)
