@@ -59,6 +59,11 @@ from an empty buffer) and `ctrl+n` walks forward, clearing the buffer once you s
 past the newest entry. On a multi-line draft, `ctrl+p`/`ctrl+n` fall through to the
 editor and move the cursor between lines, so they never clobber an unsent draft.
 
+While a turn is in flight the input stays live: a plain message is queued to
+steer the running turn, and the background-safe commands `/gh` and `/auto` run
+immediately without interrupting it — `/auto off`, for instance, drops the judge
+mid-run. Every other slash command waits until the agent is idle.
+
 ## Command review (auto mode)
 
 Before running a `bash` command, pluto reviews it: an offline **guard** denylist
