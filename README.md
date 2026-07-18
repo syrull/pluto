@@ -136,6 +136,69 @@ positive number to pause the loop after that many turns. `PLUTO_GOAL_MODEL`
 overrides the evaluator model (default: the judge model), and `PLUTO_GOAL=off`
 disables the feature.
 
+## MCP servers
+
+Pluto can load [Model Context Protocol](https://modelcontextprotocol.io) servers
+and expose their tools to the agent alongside the built-ins. Both **local**
+servers (a subprocess pluto spawns and talks to over stdio) and **remote**
+servers (an HTTP/SSE endpoint) are supported.
+
+Declare servers in `mcp.json`. Pluto looks for it, in order, at:
+
+1. `$PLUTO_MCP_CONFIG` (an explicit path override), then
+2. `~/.pluto/mcp.json` (next to the credential store), then
+3. `~/.config/pluto/mcp.json` (or `$XDG_CONFIG_HOME/pluto/mcp.json`).
+
+The first file found wins. The format matches the widely used `mcp.json` shape:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"],
+      "env": { "SOME_API_KEY": "..." }
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer ..." }
+    }
+  }
+}
+```
+
+Local servers set `command`/`args`/`env`; remote servers set `url`/`headers`.
+The transport is inferred (`command` ⇒ stdio, `url` ⇒ http) unless you set
+`type` explicitly (`stdio`, `http`, or `sse`). Add `"disabled": true` to keep a
+server in the file without loading it.
+
+Servers connect **once at startup**: each server's tools are registered as
+`mcp__<server>__<tool>` (namespaced so they never collide with built-ins or each
+other) and the connections stay open for the session. Loading is best-effort —
+a missing config is silent, and an unreachable server is logged and skipped so
+pluto still starts. Add a new server (or change one) and **restart pluto** to
+pick it up. Set `PLUTO_DEBUG=1 PLUTO_DEBUG_COMPONENTS=mcp` to trace the load,
+handshake, and every tool call.
+
+### Installing a server from a repo
+
+`/install-mcp <repo>` points the agent at a GitHub repository and has it work
+out the install for you:
+
+```
+/install-mcp https://github.com/owner/some-mcp-server
+/install-mcp owner/some-mcp-server
+```
+
+The agent explores the repo, figures out the transport and launch command,
+checks the prerequisites (Node/npx, Python/uvx, Docker, a prebuilt binary, …)
+against what you actually have installed, and then either **merges** an entry
+into your `mcp.json` (preserving existing servers) or — when something needs a
+decision only you can make, like providing an API key or installing a runtime —
+**walks you through** the remaining steps rather than guessing. It never invents
+secrets. Restart pluto afterwards to load the new server.
+
 ## Debugging
 
 Pluto can record a structured, timestamped log of *everything* that happens in a

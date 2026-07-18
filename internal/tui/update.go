@@ -332,6 +332,9 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	case "/goal":
 		return m.handleGoalCommand(line)
 
+	case "/install-mcp":
+		return m.handleInstallMCP(line)
+
 	case "/learn":
 		if len(fields) > 1 {
 			switch fields[1] {

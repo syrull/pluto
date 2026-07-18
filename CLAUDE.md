@@ -18,8 +18,8 @@ graphical bug. A feature that isn't observable in that log is incomplete.
 - Use the structured API — `debug.Trace/Debug/Info/Warn/Error` (or `Event`) with
   stable, ordered `key=value` fields — never bare formatted strings. Tag each
   event with the right component (`lifecycle`, `reposcan`, `tui`, `agent`,
-  `tool`, `llm`, `session`, `auth`, `policy`, `judge`, `guard`, `update`); reuse
-  an existing tag when the feature belongs to that subsystem.
+  `tool`, `llm`, `session`, `auth`, `policy`, `judge`, `guard`, `update`, `mcp`);
+  reuse an existing tag when the feature belongs to that subsystem.
 - Choose the level deliberately: `Info` for user-visible actions and lifecycle,
   `Debug` for internal steps, `Trace` for high-volume/per-frame firehose, and
   `Warn`/`Error` for failures. Gate expensive field building behind
