@@ -50,6 +50,7 @@ func TestCloseLastAgentResetsToFresh(t *testing.T) {
 	m := multiModel(1)
 	m.lines = []entry{{text: "old work"}}
 	m.showHome = false
+	m.input.SetValue("leftover draft")
 	m.workspaces[0].label = "some task"
 	m.workspaces[0].labeled = true
 	m.workspaces[0].agent.Load([]llm.Message{{Role: llm.RoleUser, Content: "old work"}})
@@ -61,6 +62,9 @@ func TestCloseLastAgentResetsToFresh(t *testing.T) {
 	}
 	if len(m.lines) != 0 {
 		t.Fatalf("the reset agent should have an empty transcript, got %+v", m.lines)
+	}
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("the reset agent should start with an empty draft, got %q", got)
 	}
 	if !m.showHome {
 		t.Fatal("closing the last agent should return to the dashboard")
