@@ -71,6 +71,14 @@ blocks catastrophic commands outright, and an LLM **judge** assesses the rest.
 Trivially safe read-only commands take a fast path and skip the judge. Toggle the
 whole thing with `/auto on|off`.
 
+To avoid paying for a decision it already made, pluto **memoizes judge verdicts**
+in a small per-process LRU keyed by the normalized command and working directory
+(not the model-supplied intent/why, so those can't bust or poison the cache). A
+repeated identical command reuses its allow/block verdict — the guard still runs
+on every call, and errors are never cached. The cache is in-memory only: it does
+not persist across sessions and has no TTL, so a command whose *effect* changed
+(e.g. a script edited in the worktree) can reuse a stale verdict until eviction.
+
 When the **judge itself fails** (provider unreachable, timeout, unparseable
 verdict), pluto no longer silently guesses from config. Instead it pauses the
 command and asks you:
