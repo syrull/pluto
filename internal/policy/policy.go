@@ -44,6 +44,7 @@ type ReviewGate struct {
 	cfg   Config
 	judge judge.Judge     // may be nil (guard-only review)
 	allow map[string]bool // session allowlist of human-approved patterns
+	cache *verdictCache   // memoized judge verdicts, keyed by (command, cwd)
 }
 
 var (
@@ -60,7 +61,7 @@ func NewReviewGate(cfg Config, j judge.Judge) *ReviewGate {
 	if cfg.Mode == "" {
 		cfg.Mode = DefaultMode
 	}
-	return &ReviewGate{cfg: cfg, judge: j}
+	return &ReviewGate{cfg: cfg, judge: j, cache: newVerdictCache(defaultVerdictCacheCap)}
 }
 
 // Review implements agent.Gate.
@@ -116,13 +117,27 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 	if dir == "" {
 		dir = cwd()
 	}
+
+	// Memoize the judge by (normalized command, cwd) — deliberately not
+	// intent/why, which are model-supplied and must not bust or poison the cache.
+	// guard.Check already ran above, so a cache hit can never wave through a
+	// catastrophic command; only the LLM step is skipped.
+	key := verdictKey(cmd, dir)
+	if verdict, ok := g.cacheGet(key); ok {
+		debug.Debug("policy", "judge cache hit", "cmd", truncate(cmd, 200), "cwd", dir,
+			"decision", string(verdict.Decision), "risk", verdict.Risk)
+		return verdictResult(verdict)
+	}
+	debug.Debug("policy", "judge cache miss", "cmd", truncate(cmd, 200), "cwd", dir)
+
 	debug.Debug("policy", "judge review", "cmd", truncate(cmd, 200), "cwd", dir)
 	timer := debug.NewTimer("policy", "judge verdict")
 	verdict, err := j.Assess(ctx, judge.Request{Command: cmd, Intent: intent, Why: why, Cwd: dir})
 	if err != nil {
 		// Defer to a human when one can answer; the agent falls back to the
 		// non-interactive OnJudgeError decision (carried in Allowed) when no
-		// approver is wired (headless or background agent).
+		// approver is wired (headless or background agent). Errors are never
+		// cached — the next turn should retry.
 		allowed := cfg.OnJudgeError == judge.DecisionAllow
 		reason := "judge unavailable — approve to run"
 		timer.Stop("outcome", "error", "fallback_allowed", allowed, "err", err)
@@ -137,11 +152,18 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 		}
 	}
 	timer.Stop("decision", string(verdict.Decision), "risk", verdict.Risk)
+	g.cachePut(key, verdict)
+	return verdictResult(verdict)
+}
+
+// verdictResult maps a judge verdict onto a review result. A cached verdict
+// reproduces the original decision exactly, including a block's reason.
+func verdictResult(v judge.Verdict) agent.ReviewResult {
 	return agent.ReviewResult{
-		Allowed: verdict.Decision != judge.DecisionBlock,
+		Allowed: v.Decision != judge.DecisionBlock,
 		Source:  "judge",
-		Risk:    verdict.Risk,
-		Reason:  verdict.Reason,
+		Risk:    v.Risk,
+		Reason:  v.Reason,
 	}
 }
 
@@ -164,6 +186,20 @@ func (g *ReviewGate) reviewMCP(call llm.ToolCall) agent.ReviewResult {
 		Reason:        "external MCP tool — approve to run it this session",
 		Pattern:       call.Name,
 	}
+}
+
+// cacheGet reads a memoized verdict under the gate's lock.
+func (g *ReviewGate) cacheGet(key string) (judge.Verdict, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.cache.get(key)
+}
+
+// cachePut stores a verdict under the gate's lock.
+func (g *ReviewGate) cachePut(key string, v judge.Verdict) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cache.put(key, v)
 }
 
 // Allow implements agent.Allowlister: it records a human-approved pattern on the

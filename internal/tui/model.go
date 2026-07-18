@@ -266,6 +266,7 @@ type workspace struct {
 	lines       []entry
 	history     []string
 	histPos     int
+	input       string // unsent draft input, preserved per-agent across switches
 	outputs     []toolOutput
 	codeBlocks  []codeBlock
 	streamText  string
