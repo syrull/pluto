@@ -256,7 +256,7 @@ func TestSlashCommandsMatchDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read update.go: %v", err)
 	}
-	re := regexp.MustCompile(`case "(/\w+)":`)
+	re := regexp.MustCompile(`case "(/[\w-]+)":`)
 	var dispatch []string
 	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
 		dispatch = append(dispatch, m[1])

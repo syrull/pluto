@@ -332,6 +332,9 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	case "/goal":
 		return m.handleGoalCommand(line)
 
+	case "/install-mcp":
+		return m.handleInstallMCP(line)
+
 	case "/learn":
 		if len(fields) > 1 {
 			switch fields[1] {
@@ -780,9 +783,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.approval = msg.req
 		cmd, intent, why := approvalArgs(msg.req.call)
 		debug.Info(dbgTUI, "approval prompt shown",
-			"cmd", truncCells(oneLine(cmd), 200), "intent", truncCells(oneLine(intent), 120),
-			"why", truncCells(oneLine(why), 120), "pattern", truncCells(msg.req.rr.Pattern, 200),
-			"reason", msg.req.rr.Reason)
+			"tool", msg.req.call.Name, "cmd", truncCells(oneLine(cmd), 200),
+			"intent", truncCells(oneLine(intent), 120), "why", truncCells(oneLine(why), 120),
+			"pattern", truncCells(msg.req.rr.Pattern, 200), "reason", msg.req.rr.Reason)
 		m.syncViewport()
 		return m, nil
 

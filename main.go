@@ -18,6 +18,7 @@ import (
 	"github.com/syrull/pluto/internal/judge"
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/llm/anthropic"
+	"github.com/syrull/pluto/internal/mcp"
 	"github.com/syrull/pluto/internal/policy"
 	"github.com/syrull/pluto/internal/reposcan"
 	"github.com/syrull/pluto/internal/skills"
@@ -119,6 +120,15 @@ func main() {
 	reg.MustRegister(tools.Find{})
 	reg.MustRegister(tools.Skill{})
 
+	// Load MCP servers declared in mcp.json (see internal/mcp): each connects,
+	// its tools are registered alongside the built-ins, and the connections stay
+	// open for the session. Best-effort — a missing config or an unreachable
+	// server is logged and skipped so pluto still starts.
+	mcpMgr := mcp.New(version)
+	mcpSummary := mcpMgr.LoadWithDeadline(reg)
+	defer mcpMgr.Close()
+	logMCP(mcpSummary)
+
 	provider := selectProvider()
 	gate, judgeProvider := buildGate()
 	systemPrompt := buildSystemPrompt(reg)
@@ -219,6 +229,27 @@ func logConfig(provider llm.Provider, gate agent.Gate) {
 		"anthropic_api_key", redactedEnv("ANTHROPIC_API_KEY"),
 		"anthropic_oauth_token", redactedEnv("ANTHROPIC_OAUTH_TOKEN"),
 	)
+}
+
+// logMCP records the outcome of loading MCP servers and surfaces a one-line
+// notice on stderr so the user sees which servers loaded (or failed) at startup.
+func logMCP(s mcp.Summary) {
+	if s.ConfigPath == "" && s.Servers == 0 && len(s.Failed) == 0 {
+		return // no config present; stay quiet
+	}
+	debug.Info("mcp", "startup summary",
+		"config", s.ConfigPath,
+		"servers", s.Servers,
+		"tools", s.Tools,
+		"failed", len(s.Failed),
+	)
+	if s.Servers > 0 {
+		fmt.Fprintf(os.Stderr, "pluto: loaded %d MCP server(s), %d tool(s)\n", s.Servers, s.Tools)
+	}
+	if len(s.Failed) > 0 {
+		fmt.Fprintf(os.Stderr, "pluto: %d MCP server(s) failed to load: %s (see debug log)\n",
+			len(s.Failed), strings.Join(s.Failed, ", "))
+	}
 }
 
 // redactedEnv reports the presence of a secret env var without revealing it.
