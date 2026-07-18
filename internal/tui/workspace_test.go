@@ -76,6 +76,61 @@ func TestSwitchRetainsEachTranscript(t *testing.T) {
 	}
 }
 
+// TestSwitchRetainsPerAgentDraft proves the unsent input buffer is per-agent: a
+// draft typed on agent A stays with A across a switch, agent B starts with its
+// own (empty) draft rather than inheriting A's, and the switch logs both draft
+// lengths.
+func TestSwitchRetainsPerAgentDraft(t *testing.T) {
+	read := enableTUILog(t, "info")
+	m := multiModel(2)
+
+	m.input.SetValue("unsent draft on A")
+	m.input.CursorEnd()
+
+	m.switchTo(1)
+	if got := m.input.Value(); got != "" {
+		t.Fatalf("agent B should start with its own empty draft, got %q", got)
+	}
+
+	m.input.SetValue("B's own words")
+	m.input.CursorEnd()
+
+	m.switchTo(0)
+	if got := m.input.Value(); got != "unsent draft on A" {
+		t.Fatalf("agent A's draft should be restored on switch back, got %q", got)
+	}
+
+	m.switchTo(1)
+	if got := m.input.Value(); got != "B's own words" {
+		t.Fatalf("agent B's draft should be independent and restored, got %q", got)
+	}
+
+	out := read()
+	if !strings.Contains(out, "switch agent") || !strings.Contains(out, "draft_out=") || !strings.Contains(out, "draft_in=") {
+		t.Errorf("switch should log per-agent draft lengths:\n%s", out)
+	}
+}
+
+// TestDraftSurvivesBackgroundWorkspace proves a transient background swap
+// (onWorkspace, fired on every background-agent event) neither disturbs the
+// visible agent's unsent draft/cursor nor clobbers the background agent's own draft.
+func TestDraftSurvivesBackgroundWorkspace(t *testing.T) {
+	m := multiModel(2) // workspace 0 active, workspace 1 in the background
+
+	m.input.SetValue("visible draft")
+	m.input.CursorEnd()
+	m.workspaces[1].input = "background draft"
+
+	m.onWorkspace(1, func() {})
+
+	if got := m.input.Value(); got != "visible draft" {
+		t.Fatalf("background activity disturbed the visible draft, got %q", got)
+	}
+	if got := m.workspaces[1].input; got != "background draft" {
+		t.Fatalf("background activity clobbered the background agent's draft, got %q", got)
+	}
+}
+
 func TestBackgroundEventDoesNotDisturbActive(t *testing.T) {
 	m := multiModel(2)
 	m.lines = []entry{{text: "active line"}}

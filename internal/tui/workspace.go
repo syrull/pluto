@@ -93,6 +93,12 @@ func (m *model) stash(i int) {
 	w.lines = m.lines
 	w.history = m.history
 	w.histPos = m.histPos
+	// A transient background swap (onWorkspace) leaves the visible input alone, so
+	// don't capture it here — that would clobber the background agent's own draft
+	// with the foreground's. Real switches (swapped == false) do capture it.
+	if !m.swapped {
+		w.input = m.input.Value()
+	}
 	w.outputs = m.outputs
 	w.codeBlocks = m.codeBlocks
 	w.streamText = m.streamText
@@ -122,11 +128,14 @@ func (m *model) unstash(i int) {
 	m.lines = w.lines
 	m.history = w.history
 	// A transient background swap (onWorkspace) must leave the visible input's
-	// recall position untouched; a user-facing switch starts fresh (not navigating).
+	// recall position and draft/cursor untouched; a user-facing switch starts
+	// fresh (not navigating) and restores the target agent's own unsent draft.
 	if m.swapped {
 		m.histPos = w.histPos
 	} else {
 		m.histPos = len(w.history)
+		m.input.SetValue(w.input)
+		m.input.CursorEnd()
 	}
 	m.outputs = w.outputs
 	m.codeBlocks = w.codeBlocks
@@ -167,7 +176,8 @@ func (m *model) switchTo(i int) tea.Cmd {
 	if i < 0 || i >= len(m.workspaces) || i == m.active {
 		return nil
 	}
-	debug.Info(dbgTUI, "switch agent", "from", m.active, "to", i, "cwd", m.workspaces[i].cwd)
+	debug.Info(dbgTUI, "switch agent", "from", m.active, "to", i, "cwd", m.workspaces[i].cwd,
+		"draft_out", len(m.input.Value()), "draft_in", len(m.workspaces[i].input))
 	m.stash(m.active)
 	m.active = i
 	m.unstash(i)
