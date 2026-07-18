@@ -3,7 +3,9 @@ package policy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/syrull/pluto/internal/judge"
@@ -155,6 +157,35 @@ func TestJudgeCacheNeverBypassesGuard(t *testing.T) {
 	if j.calls != 1 {
 		t.Fatalf("judge called %d times, want 1 (guard blocks never consult judge)", j.calls)
 	}
+}
+
+// TestJudgeCacheConcurrentReview hammers a single shared gate from many
+// goroutines the way parallel workspace agents do, with a small cache so hits,
+// puts, and evictions all race. It asserts nothing beyond correctness; the -race
+// detector is the real subject under test.
+func TestJudgeCacheConcurrentReview(t *testing.T) {
+	g := newGate(t, judge.Fake{Verdict: judge.Verdict{Decision: judge.DecisionAllow, Risk: "low"}}, func(c *Config) { c.FastPath = false })
+	g.cache = newVerdictCache(4) // tiny cap ⇒ constant eviction churn
+
+	const workers, iters = 16, 200
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				// Overlapping keys across workers force cache hits; the rotating
+				// suffix and per-worker cwd force puts and evictions.
+				ctx := workdir.With(context.Background(), fmt.Sprintf("/tmp/agent-%d", w%3))
+				cmd := fmt.Sprintf("go run ./cmd/tool --n %d", i%8)
+				if rr := g.Review(ctx, bashCall(cmd)); !rr.Allowed || rr.Source != "judge" {
+					t.Errorf("concurrent review = %+v, want allowed judge", rr)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
 }
 
 func TestJudgeCacheHitMissLogged(t *testing.T) {
