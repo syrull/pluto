@@ -93,9 +93,8 @@ func (m *model) stash(i int) {
 	w.lines = m.lines
 	w.history = m.history
 	w.histPos = m.histPos
-	// A transient background swap (onWorkspace) leaves the visible input alone, so
-	// don't capture it here — that would clobber the background agent's own draft
-	// with the foreground's. Real switches (swapped == false) do capture it.
+	// Skip during a background swap so it can't clobber the background agent's own
+	// draft with the foreground's; real switches (swapped == false) do capture it.
 	if !m.swapped {
 		w.input = m.input.Value()
 	}
@@ -181,6 +180,8 @@ func (m *model) switchTo(i int) tea.Cmd {
 	m.stash(m.active)
 	m.active = i
 	m.unstash(i)
+	// The restored draft is the new source of truth for the autocomplete popup.
+	m.refreshCommandMenu()
 	m.workspaces[i].unread = false
 	m.agentsCursor = i
 	m.finder = nil
@@ -416,6 +417,7 @@ func (m *model) resetLastAgent(label, removeErr string) tea.Cmd {
 	m.pendingArgs = ""
 	m.streamText = ""
 	m.streamThink = ""
+	m.input.Reset()
 	m.sessionName = ""
 	m.showHome = true
 	m.finder = nil
