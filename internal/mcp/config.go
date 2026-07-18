@@ -86,6 +86,9 @@ func (s ServerConfig) Validate(name string) error {
 		if !strings.HasPrefix(s.URL, "http://") && !strings.HasPrefix(s.URL, "https://") {
 			return fmt.Errorf("mcp: server %q: url must be http(s)", name)
 		}
+		if strings.TrimSpace(s.Command) != "" {
+			return fmt.Errorf("mcp: server %q: %s transport must not set command", name, s.Transport())
+		}
 	}
 	return nil
 }

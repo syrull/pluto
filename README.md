@@ -173,6 +173,12 @@ The transport is inferred (`command` ⇒ stdio, `url` ⇒ http) unless you set
 `type` explicitly (`stdio`, `http`, or `sse`). Add `"disabled": true` to keep a
 server in the file without loading it.
 
+A local server inherits only a curated, secret-free slice of pluto's environment
+(`PATH`, `HOME`, and the like) — never your API keys or OAuth tokens. Give a
+server a secret explicitly through its `env` block; nothing else leaks into the
+subprocess. Its stderr goes to the debug log, not the terminal, so it can't
+corrupt the TUI.
+
 Servers connect **once at startup**: each server's tools are registered as
 `mcp__<server>__<tool>` (namespaced so they never collide with built-ins or each
 other) and the connections stay open for the session. Loading is best-effort —
@@ -180,6 +186,12 @@ a missing config is silent, and an unreachable server is logged and skipped so
 pluto still starts. Add a new server (or change one) and **restart pluto** to
 pick it up. Set `PLUTO_DEBUG=1 PLUTO_DEBUG_COMPONENTS=mcp` to trace the load,
 handshake, and every tool call.
+
+Because an MCP tool is opaque third-party code with no shell command for the
+guard or judge to inspect, auto mode asks you to approve each MCP tool the first
+time the agent calls it (`y` once, `a` to allow that tool for the rest of the
+session, `n` to block) — the same prompt used for `bash`. Approvals are skipped
+entirely when auto mode is off (`PLUTO_AUTO=off`).
 
 ### Installing a server from a repo
 

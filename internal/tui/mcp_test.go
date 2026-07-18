@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -59,6 +60,20 @@ func TestInstallMCPRejectsGarbage(t *testing.T) {
 	}
 	if !strings.Contains(status, "GitHub repository") {
 		t.Fatalf("expected a repo-format hint, got %q", status)
+	}
+}
+
+func TestApprovalPromptRendersMCPCall(t *testing.T) {
+	req := &approvalRequest{
+		call: llm.ToolCall{Name: "mcp__github__create_issue", Args: json.RawMessage(`{"title":"x"}`)},
+		rr:   agent.ReviewResult{Source: "mcp", Pattern: "mcp__github__create_issue"},
+	}
+	out := renderApprovalPrompt(80, 24, req)
+	if !strings.Contains(out, "MCP tool") {
+		t.Fatalf("MCP approval prompt missing its header: %q", out)
+	}
+	if !strings.Contains(out, "mcp__github__create_issue") {
+		t.Fatal("MCP approval prompt should name the tool and allow pattern")
 	}
 }
 

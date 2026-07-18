@@ -15,11 +15,12 @@ import (
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
-// Approver bridges an agent's blocking judge-error approval request to the
-// interactive TUI. The agent goroutine calls Approve, which hands the request to
-// the model over a channel and blocks on a reply; the model renders a prompt and
-// sends the user's choice back. One Approver is shared by every agent, so
-// simultaneous requests queue and are answered one at a time.
+// Approver bridges an agent's blocking approval request (a judge outage, or a
+// first call to an external MCP tool) to the interactive TUI. The agent
+// goroutine calls Approve, which hands the request to the model over a channel
+// and blocks on a reply; the model renders a prompt and sends the user's choice
+// back. One Approver is shared by every agent, so simultaneous requests queue and
+// are answered one at a time.
 type Approver struct {
 	requests chan *approvalRequest
 }
@@ -84,7 +85,7 @@ func (m *model) answerApproval(choice agent.ApprovalChoice) tea.Cmd {
 	}
 	cmd, _, _ := approvalArgs(req.call)
 	debug.Info(dbgTUI, "approval decision", "choice", approvalChoiceName(choice),
-		"cmd", truncCells(oneLine(cmd), 200), "pattern", truncCells(dec.Pattern, 200))
+		"tool", req.call.Name, "cmd", truncCells(oneLine(cmd), 200), "pattern", truncCells(dec.Pattern, 200))
 	req.reply <- dec
 	m.notice = approvalNotice(choice, dec.Pattern)
 	m.syncViewport()
@@ -127,8 +128,9 @@ func approvalNotice(choice agent.ApprovalChoice, pattern string) string {
 }
 
 // renderApprovalPrompt renders the human-in-the-loop approval as a centered
-// overlay showing the command, its intent/why, the pattern an "allow" would
-// remember, and the three keybindings.
+// overlay showing the call, the pattern an "allow" would remember, and the three
+// keybindings. A bash call shows its command plus intent/why; any other tool
+// (e.g. an external MCP tool) shows its name and a JSON argument preview.
 func renderApprovalPrompt(width, height int, req *approvalRequest) string {
 	inner := width - 8
 	if inner < 24 {
@@ -142,21 +144,30 @@ func renderApprovalPrompt(width, height int, req *approvalRequest) string {
 		bodyW = 10
 	}
 
-	cmd, intent, why := approvalArgs(req.call)
-
 	var b strings.Builder
-	b.WriteString(styleReview.Bold(true).Render("⚠ judge unavailable — approve this command?"))
-	b.WriteString("\n\n")
-	b.WriteString(styleToolName.Render("→ bash"))
-	b.WriteString("\n")
-	b.WriteString(styleToolArgs.Width(bodyW).Render(widgets.Sanitize(strings.TrimRight(cmd, "\n"))))
-	if s := strings.TrimSpace(intent); s != "" {
+	if req.call.Name == "bash" {
+		cmd, intent, why := approvalArgs(req.call)
+		b.WriteString(styleReview.Bold(true).Render("⚠ judge unavailable — approve this command?"))
+		b.WriteString("\n\n")
+		b.WriteString(styleToolName.Render("→ bash"))
 		b.WriteString("\n")
-		b.WriteString(styleHint.Render("intent: ") + styleToolBody.Render(oneLine(s)))
-	}
-	if s := strings.TrimSpace(why); s != "" {
-		b.WriteString("\n")
-		b.WriteString(styleHint.Render("why: ") + styleToolBody.Render(oneLine(s)))
+		b.WriteString(styleToolArgs.Width(bodyW).Render(widgets.Sanitize(strings.TrimRight(cmd, "\n"))))
+		if s := strings.TrimSpace(intent); s != "" {
+			b.WriteString("\n")
+			b.WriteString(styleHint.Render("intent: ") + styleToolBody.Render(oneLine(s)))
+		}
+		if s := strings.TrimSpace(why); s != "" {
+			b.WriteString("\n")
+			b.WriteString(styleHint.Render("why: ") + styleToolBody.Render(oneLine(s)))
+		}
+	} else {
+		b.WriteString(styleReview.Bold(true).Render("⚠ external MCP tool — approve this call?"))
+		b.WriteString("\n\n")
+		b.WriteString(styleToolName.Render("→ " + req.call.Name))
+		if args := strings.TrimSpace(string(req.call.Args)); args != "" && args != "{}" {
+			b.WriteString("\n")
+			b.WriteString(styleToolArgs.Width(bodyW).Render(widgets.Sanitize(oneLine(args))))
+		}
 	}
 	if p := strings.TrimSpace(req.rr.Pattern); p != "" {
 		b.WriteString("\n")

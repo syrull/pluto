@@ -40,6 +40,7 @@ func TestValidate(t *testing.T) {
 		{"http ok", ServerConfig{URL: "https://x/mcp"}, false},
 		{"http missing url", ServerConfig{Type: "http"}, true},
 		{"http bad scheme", ServerConfig{Type: "http", URL: "ftp://x"}, true},
+		{"http with command", ServerConfig{Type: "http", URL: "https://x", Command: "npx"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

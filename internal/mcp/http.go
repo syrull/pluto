@@ -150,6 +150,11 @@ func (c *httpConn) readResponse(resp *http.Response, id int64) (rpcIncoming, err
 	if err := json.Unmarshal(bytes.TrimSpace(data), &msg); err != nil {
 		return rpcIncoming{}, fmt.Errorf("mcp: %s: decode response: %w", c.name, err)
 	}
+	// Defensive: a JSON reply should echo the request id (the SSE path already
+	// matches on it). Reject a mismatched id rather than trusting a stray frame.
+	if msg.ID != nil && *msg.ID != id {
+		return rpcIncoming{}, fmt.Errorf("mcp: %s: response id %d does not match request %d", c.name, *msg.ID, id)
+	}
 	return msg, nil
 }
 

@@ -117,6 +117,40 @@ func TestReviewOffAndNonBash(t *testing.T) {
 	}
 }
 
+func mcpCall(name string) llm.ToolCall {
+	return llm.ToolCall{Name: name, Args: json.RawMessage(`{"q":"x"}`)}
+}
+
+func TestReviewMCPToolNeedsApproval(t *testing.T) {
+	g := newGate(t, judge.Fake{}, nil)
+	rr := g.Review(context.Background(), mcpCall("mcp__github__create_issue"))
+	if rr.Allowed || !rr.NeedsApproval || rr.Source != "mcp" {
+		t.Fatalf("MCP review = %+v, want blocked + needs-approval via mcp", rr)
+	}
+	if rr.Pattern != "mcp__github__create_issue" {
+		t.Fatalf("Pattern = %q, want the tool name", rr.Pattern)
+	}
+}
+
+func TestReviewMCPAllowlisted(t *testing.T) {
+	g := newGate(t, judge.Fake{}, nil)
+	g.Allow("mcp__github__create_issue")
+	if rr := g.Review(context.Background(), mcpCall("mcp__github__create_issue")); !rr.Allowed || rr.Source != "allowlist" {
+		t.Fatalf("allowlisted MCP review = %+v, want allowed via allowlist", rr)
+	}
+	// A different MCP tool is not covered by the entry and still needs approval.
+	if rr := g.Review(context.Background(), mcpCall("mcp__github__delete_repo")); rr.Allowed || !rr.NeedsApproval {
+		t.Fatalf("unlisted MCP tool = %+v, want needs-approval", rr)
+	}
+}
+
+func TestReviewMCPOffPassesThrough(t *testing.T) {
+	off := newGate(t, judge.Fake{}, func(c *Config) { c.Mode = ModeOff })
+	if rr := off.Review(context.Background(), mcpCall("mcp__x__y")); !rr.Allowed || rr.Source != "off" {
+		t.Fatalf("MCP with auto off = %+v, want allowed off", rr)
+	}
+}
+
 func TestAutoController(t *testing.T) {
 	g := newGate(t, judge.Fake{}, func(c *Config) { c.JudgeName = "claude-haiku-4-5" })
 	if !g.AutoEnabled() {

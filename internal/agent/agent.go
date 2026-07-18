@@ -62,7 +62,7 @@ type ReviewResult struct {
 	// without one it falls back to Allowed (the OnJudgeError policy).
 	NeedsApproval bool
 	// Source names the deciding layer: "fast-path", "guard", "guard-only",
-	// "judge", "judge-error", "allowlist", "approved", "denied", or "off".
+	// "judge", "judge-error", "mcp", "allowlist", "approved", "denied", or "off".
 	Source string
 	Risk   string
 	Reason string
@@ -98,8 +98,9 @@ type ApprovalDecision struct {
 }
 
 // Approver resolves a review the gate flagged NeedsApproval, blocking until the
-// user chooses. It is consulted only for the judge-error branch; guard denylist
-// hits and explicit judge blocks never reach it.
+// user chooses. It is consulted when the judge errors, and when an external MCP
+// tool runs for the first time; guard denylist hits and explicit judge blocks
+// never reach it.
 type Approver interface {
 	Approve(ctx context.Context, call llm.ToolCall, rr ReviewResult) (ApprovalDecision, error)
 }
@@ -459,7 +460,10 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 				if rr.NeedsApproval {
 					rr = a.resolveApproval(ctx, call, rr)
 				}
-				if call.Name == "bash" && rr.Source != "off" {
+				// Surface the verdict for reviewed calls: bash always, and any tool
+				// the gate actually reviewed (e.g. an MCP tool) rather than waved
+				// through on the fast path.
+				if rr.Source != "off" && (call.Name == "bash" || rr.Source != "fast-path") {
 					emit(Event{Kind: "tool_review", Tool: call.Name, Text: reviewLine(rr)})
 				}
 				if !rr.Allowed {

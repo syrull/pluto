@@ -2,14 +2,18 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 
 	"github.com/syrull/pluto/internal/debug"
 )
@@ -40,13 +44,22 @@ func newStdioConn(name string, r io.Reader, w io.WriteCloser, stop func() error)
 	return c
 }
 
+// stopGrace bounds each stage of a graceful subprocess shutdown (EOF → SIGTERM →
+// SIGKILL) so a stuck server can't wedge pluto's exit for long.
+const stopGrace = 2 * time.Second
+
 // startStdioProcess spawns the configured command and connects to it over stdio.
-func startStdioProcess(ctx context.Context, name string, cfg ServerConfig) (*stdioConn, error) {
+// ctx is intentionally NOT applied to the process (via exec.CommandContext): the
+// server must outlive the bounded dial context and stay alive for the session;
+// the handshake that follows is what the caller bounds with ctx.
+func startStdioProcess(_ context.Context, name string, cfg ServerConfig) (*stdioConn, error) {
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Env = mergeEnv(cfg.Env)
-	// The server's own diagnostics go to our stderr so they land in a terminal
-	// scrollback; only stdout carries protocol frames.
-	cmd.Stderr = os.Stderr
+	// Forward the server's stderr diagnostics to the debug log rather than our own
+	// stderr: pluto runs a full-screen (alt-screen) TUI, so raw writes would paint
+	// over and corrupt the display. os/exec drains this writer on its own goroutine
+	// and Wait finishes it, so no pipe bookkeeping is needed.
+	cmd.Stderr = &stderrLogger{server: name}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("mcp: %s: stdin pipe: %w", name, err)
@@ -59,26 +72,98 @@ func startStdioProcess(ctx context.Context, name string, cfg ServerConfig) (*std
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("mcp: %s: start %q: %w", name, cfg.Command, err)
 	}
-	stop := func() error {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		return cmd.Wait()
-	}
+	stop := func() error { return stopProcess(cmd, stdin) }
 	return newStdioConn(name, stdout, stdin, stop), nil
 }
 
-// mergeEnv overlays the server's declared env on the process environment.
-func mergeEnv(extra map[string]string) []string {
-	if len(extra) == 0 {
-		return os.Environ()
+// stopProcess tears a server down gracefully: closing stdin signals EOF so a
+// well-behaved server exits on its own, then it escalates to SIGTERM and finally
+// SIGKILL, each after stopGrace, so a stuck process is still reaped.
+func stopProcess(cmd *exec.Cmd, stdin io.Closer) error {
+	_ = stdin.Close()
+	if cmd.Process == nil {
+		return cmd.Wait()
 	}
-	env := os.Environ()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(stopGrace):
+	}
+	_ = cmd.Process.Signal(syscall.SIGTERM) // best-effort; a no-op on platforms without it
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(stopGrace):
+	}
+	_ = cmd.Process.Kill()
+	return <-done
+}
+
+// inheritedEnvVars is the curated allowlist a spawned stdio server inherits from
+// pluto's environment. It deliberately omits secrets (API keys, OAuth tokens, and
+// anything else in the parent env) so a third-party server never receives pluto's
+// credentials — a server gets a secret only when its config "env" block sets it.
+var inheritedEnvVars = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM",
+	"LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR",
+	// Windows equivalents so stdio servers resolve their runtime there too.
+	"SYSTEMROOT", "SYSTEMDRIVE", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+	"PROGRAMFILES", "PROGRAMDATA", "TEMP", "TMP", "PATHEXT",
+}
+
+// mergeEnv overlays the server's declared env on the curated base environment
+// (see inheritedEnvVars). The full parent environment is intentionally NOT passed
+// through, so secrets in pluto's own env don't leak into third-party servers.
+func mergeEnv(extra map[string]string) []string {
+	env := make([]string, 0, len(inheritedEnvVars)+len(extra))
+	for _, k := range inheritedEnvVars {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
 	for k, v := range extra {
 		env = append(env, k+"="+v)
 	}
 	return env
+}
+
+// stderrLogger forwards a spawned server's stderr to the debug log line by line
+// so its diagnostics never corrupt the alt-screen TUI. os/exec writes to it from
+// a single goroutine, so it needs no locking; a partial final line (no trailing
+// newline) is flushed when the write exceeds maxStderrBuf.
+type stderrLogger struct {
+	server string
+	buf    []byte
+}
+
+// maxStderrBuf caps the pending-line buffer so a server that streams without
+// newlines can't grow it without bound.
+const maxStderrBuf = 64 * 1024
+
+func (l *stderrLogger) Write(p []byte) (int, error) {
+	l.buf = append(l.buf, p...)
+	for {
+		i := bytes.IndexByte(l.buf, '\n')
+		if i < 0 {
+			break
+		}
+		l.emit(l.buf[:i])
+		l.buf = l.buf[i+1:]
+	}
+	if len(l.buf) > maxStderrBuf {
+		l.emit(l.buf)
+		l.buf = l.buf[:0]
+	}
+	return len(p), nil
+}
+
+func (l *stderrLogger) emit(line []byte) {
+	s := strings.TrimRight(string(line), "\r")
+	if s != "" {
+		debug.Debug("mcp", "server stderr", "server", l.server, "line", s)
+	}
 }
 
 // readLoop consumes framed messages, dispatching responses to waiters and

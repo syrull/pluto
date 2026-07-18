@@ -31,6 +31,20 @@ func TestToolNameTruncatedToLimit(t *testing.T) {
 	}
 }
 
+func TestIsToolName(t *testing.T) {
+	if !IsToolName("mcp__github__create_issue") {
+		t.Error("namespaced MCP tool should be recognized")
+	}
+	if !IsToolName(toolName("srv", "tool")) {
+		t.Error("toolName output must satisfy IsToolName")
+	}
+	for _, n := range []string{"bash", "read", "mcp", "mcp_x", "xmcp__y"} {
+		if IsToolName(n) {
+			t.Errorf("IsToolName(%q) = true, want false", n)
+		}
+	}
+}
+
 func TestSanitizeEmpty(t *testing.T) {
 	if got := sanitize("///"); got != "___" {
 		t.Fatalf("sanitize(///) = %q", got)

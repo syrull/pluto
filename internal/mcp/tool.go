@@ -15,6 +15,14 @@ import (
 // so tools from different servers (or with built-in names) never collide.
 const namePrefix = "mcp"
 
+// NamePrefix is the leading segment on every MCP tool's registry name
+// (mcp__<server>__<tool>). Callers outside this package — notably the review
+// gate — use IsToolName to tell an external MCP tool from a built-in.
+const NamePrefix = namePrefix + "__"
+
+// IsToolName reports whether name is an MCP-provided tool (see toolName).
+func IsToolName(name string) bool { return strings.HasPrefix(name, NamePrefix) }
+
 // maxToolNameLen matches the Anthropic tool-name limit; longer names are
 // truncated so the model-facing name stays valid.
 const maxToolNameLen = 64

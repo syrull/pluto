@@ -99,6 +99,43 @@ func TestStdioClientHandshakeAndTools(t *testing.T) {
 	}
 }
 
+func TestMergeEnvCuratesSecrets(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-secret")
+	t.Setenv("ANTHROPIC_OAUTH_TOKEN", "oauth-secret")
+	// A non-allowlisted variable in the parent env must not reach the child.
+	t.Setenv("MCP_TEST_SECRET", "leak-me")
+
+	joined := strings.Join(mergeEnv(map[string]string{"SOME_API_KEY": "declared"}), "\n")
+	if !strings.Contains(joined, "PATH=/usr/bin") {
+		t.Error("PATH should be inherited from the curated allowlist")
+	}
+	if !strings.Contains(joined, "SOME_API_KEY=declared") {
+		t.Error("the server's declared env should be passed through")
+	}
+	for _, leak := range []string{"sk-secret", "oauth-secret", "ANTHROPIC_API_KEY", "MCP_TEST_SECRET", "leak-me"} {
+		if strings.Contains(joined, leak) {
+			t.Errorf("parent secret %q leaked into the child environment", leak)
+		}
+	}
+}
+
+func TestStderrLoggerBuffersLines(t *testing.T) {
+	l := &stderrLogger{server: "s"}
+	if n, err := l.Write([]byte("partial")); err != nil || n != 7 {
+		t.Fatalf("Write = %d, %v", n, err)
+	}
+	if len(l.buf) != len("partial") {
+		t.Fatalf("a line without a newline should stay buffered, have %q", l.buf)
+	}
+	if _, err := l.Write([]byte(" line\r\nsecond\n")); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.buf) != 0 {
+		t.Fatalf("buffer should drain after a trailing newline, have %q", l.buf)
+	}
+}
+
 func TestStdioClosedConnFailsCalls(t *testing.T) {
 	c := newTestClient(t, nil)
 	ctx := context.Background()

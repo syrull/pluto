@@ -14,6 +14,7 @@ import (
 	"github.com/syrull/pluto/internal/guard"
 	"github.com/syrull/pluto/internal/judge"
 	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/mcp"
 	"github.com/syrull/pluto/internal/workdir"
 )
 
@@ -71,7 +72,14 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 	if cfg.Mode == ModeOff {
 		return agent.ReviewResult{Allowed: true, Source: "off"}
 	}
+	// External MCP tools are third-party code with no shell command for the guard
+	// or judge to inspect, so they take a dedicated approval path rather than the
+	// bash review below. Built-in non-bash tools (read/write/edit/…) stay on the
+	// fast path.
 	if call.Name != "bash" {
+		if mcp.IsToolName(call.Name) {
+			return g.reviewMCP(call)
+		}
 		return agent.ReviewResult{Allowed: true, Source: "fast-path"}
 	}
 
@@ -134,6 +142,27 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 		Source:  "judge",
 		Risk:    verdict.Risk,
 		Reason:  verdict.Reason,
+	}
+}
+
+// reviewMCP gates a call to an external MCP server tool. Since there is no shell
+// command for the guard/judge to reason about, pluto asks the human to approve
+// each distinct MCP tool the first time it runs; approving "this pattern"
+// allowlists that tool for the rest of the session. With no approver wired
+// (background/headless) the call is blocked as a fail-safe, so an unattended run
+// never fires an unreviewed external tool.
+func (g *ReviewGate) reviewMCP(call llm.ToolCall) agent.ReviewResult {
+	if g.allowed(call.Name) {
+		debug.Info("policy", "mcp allowlist match", "tool", call.Name)
+		return agent.ReviewResult{Allowed: true, Source: "allowlist"}
+	}
+	debug.Info("policy", "mcp tool needs approval", "tool", call.Name)
+	return agent.ReviewResult{
+		Allowed:       false,
+		NeedsApproval: true,
+		Source:        "mcp",
+		Reason:        "external MCP tool — approve to run it this session",
+		Pattern:       call.Name,
 	}
 }
 
