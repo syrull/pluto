@@ -12,9 +12,17 @@ type Schema struct {
 	Required   []string            `json:"required,omitempty"`
 }
 
+// Property describes one field of an object schema. The extra fields beyond
+// Type/Description let a tool declare enums, arrays (Items), and nested objects
+// (Properties/Required) without hand-writing raw JSON; all are optional so a
+// flat string property still marshals to the minimal shape.
 type Property struct {
-	Type        string `json:"type"`
-	Description string `json:"description,omitempty"`
+	Type        string              `json:"type"`
+	Description string              `json:"description,omitempty"`
+	Enum        []string            `json:"enum,omitempty"`
+	Items       *Property           `json:"items,omitempty"`
+	Properties  map[string]Property `json:"properties,omitempty"`
+	Required    []string            `json:"required,omitempty"`
 }
 
 // ObjectSchema builds an object Schema from properties and a required field list.

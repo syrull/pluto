@@ -3,10 +3,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/llm"
@@ -156,6 +158,38 @@ func WithSummarizer(fn func(context.Context, string) (string, error)) Option {
 	return func(a *Agent) { a.summarize = fn }
 }
 
+// ErrBudgetExhausted is returned by Run when a worker budget (turns or tokens)
+// stops the loop before the agent finished on its own. A wall-clock budget
+// surfaces as ctx's deadline error instead, since it is enforced through the
+// context. Callers (the worker runner) treat it as an expected terminal state,
+// not a failure: whatever the run produced so far still stands.
+var ErrBudgetExhausted = errors.New("agent: budget exhausted")
+
+// Budget caps a single Run so a stuck or looping worker is reaped instead of
+// burning the whole session. Every field is optional; a zero value means "no
+// limit", so the default top-level agent (which sets no budget) is unbounded and
+// its behavior is unchanged.
+type Budget struct {
+	// Turns caps the number of model turns (think→act steps) the run may take.
+	Turns int
+	// Tokens caps the cumulative input+output tokens the run may spend across all
+	// of its turns (an approximate throughput ceiling, not a context-window size).
+	Tokens int
+	// Wall caps the wall-clock time the whole run may take; it is enforced by
+	// deriving a deadline context, so hitting it surfaces as a context error.
+	Wall time.Duration
+}
+
+// zero reports whether the budget imposes no limits at all.
+func (b Budget) zero() bool { return b.Turns == 0 && b.Tokens == 0 && b.Wall == 0 }
+
+// WithBudget caps the run per the given Budget (turns / tokens / wall-clock),
+// used by the worker runner to bound a sub-agent. A zero Budget is a no-op, so
+// the unbounded top-level agent is unaffected.
+func WithBudget(b Budget) Option {
+	return func(a *Agent) { a.budget = b }
+}
+
 // Agent owns a provider, a tool registry, and the running transcript.
 type Agent struct {
 	provider     llm.Provider
@@ -176,6 +210,12 @@ type Agent struct {
 	learnMode    bool      // when true, learnOverlay is appended to the system message
 	// summarize compacts evicted exchanges into a memory turn; nil ⇒ plain eviction.
 	summarize func(context.Context, string) (string, error)
+
+	// budget bounds a worker run (turns/tokens/wall); zero ⇒ unbounded (the
+	// default top-level agent). spentTokens is the cumulative input+output tokens
+	// this Run has reported, checked against budget.Tokens (guarded by mu).
+	budget      Budget
+	spentTokens int
 
 	steerMu sync.Mutex     // guards steer
 	steer   []SteerMessage // user messages queued to fold into a running turn
@@ -338,6 +378,11 @@ func (a *Agent) AddContext(text string) {
 // ProviderName returns the backend name, for display.
 func (a *Agent) ProviderName() string { return a.provider.Name() }
 
+// Spent reports the cumulative input+output tokens the most recent Run has
+// reported so far, used by the worker runner to display a worker's token budget
+// burn. It resets at the start of each Run.
+func (a *Agent) Spent() int { return a.spent() }
+
 // ContextUsage reports the tokens consumed by the most recent turn and the
 // active model's context window. ok is false when the provider cannot report a
 // context window.
@@ -386,6 +431,15 @@ func (a *Agent) specs() []llm.ToolSpec {
 func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachment, emit func(Event)) (string, error) {
 	debug.Info("agent", "run start", "input", truncate(input, 256), "attachments", len(attachments), "provider", a.provider.Name())
 	runTimer := debug.NewTimer("agent", "run done")
+	// A wall-clock budget is enforced by deriving a deadline context; every
+	// existing ctx.Err() check then reaps the run when the clock runs out.
+	if a.budget.Wall > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.budget.Wall)
+		defer cancel()
+		debug.Debug("agent", "budget wall applied", "wall", a.budget.Wall)
+	}
+	a.resetSpent()
 	a.appendMessages(llm.Message{Role: llm.RoleUser, Content: input, Attachments: attachments})
 	a.compactTranscript(ctx)
 
@@ -394,6 +448,14 @@ func (a *Agent) Run(ctx context.Context, input string, attachments []llm.Attachm
 		if err := ctx.Err(); err != nil {
 			runTimer.Stop("outcome", "canceled", "step", step+1)
 			return "", err
+		}
+		// Reap a worker that has hit its turn or token budget before spending
+		// another turn; whatever it produced so far already rode out via events.
+		if reason := a.budgetExceeded(step); reason != "" {
+			debug.Warn("agent", "budget exhausted", "reason", reason, "step", step+1,
+				"turns", a.budget.Turns, "tokens", a.budget.Tokens, "spent_tok", a.spent())
+			runTimer.Stop("outcome", "budget", "reason", reason, "step", step+1)
+			return "", fmt.Errorf("%w (%s)", ErrBudgetExhausted, reason)
 		}
 		// Fold in any user messages queued since the previous step so the model
 		// sees them before generating its next turn.
@@ -608,11 +670,46 @@ func (a *Agent) appendMessages(msgs ...llm.Message) {
 	a.transcript = append(a.transcript, msgs...)
 }
 
-// setUsage records the latest token accounting under the lock.
+// setUsage records the latest token accounting under the lock and folds this
+// turn's tokens into the running per-Run total the token budget checks.
 func (a *Agent) setUsage(u llm.Usage) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.lastUsage = u
+	a.spentTokens += u.InputTokens + u.OutputTokens
+}
+
+// resetSpent zeroes the per-Run token tally so each worker Run enforces its
+// token budget from a clean slate.
+func (a *Agent) resetSpent() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.spentTokens = 0
+}
+
+// spent returns the cumulative tokens the current Run has reported.
+func (a *Agent) spent() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.spentTokens
+}
+
+// budgetExceeded reports which limit (if any) the run has hit before its step-th
+// turn: "turns" once step reaches the turn cap, or "tokens" once the cumulative
+// spend reaches the token cap. It returns "" when unbounded or still within
+// budget. The turn cap is checked before the token cap so a zero-token first
+// turn still runs.
+func (a *Agent) budgetExceeded(step int) string {
+	if a.budget.zero() {
+		return ""
+	}
+	if a.budget.Turns > 0 && step >= a.budget.Turns {
+		return "turns"
+	}
+	if a.budget.Tokens > 0 && a.spent() >= a.budget.Tokens {
+		return "tokens"
+	}
+	return ""
 }
 
 // trimTranscript trims the transcript under the lock; see trimTranscriptLocked.

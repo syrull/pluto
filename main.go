@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -21,11 +22,13 @@ import (
 	"github.com/syrull/pluto/internal/mcp"
 	"github.com/syrull/pluto/internal/policy"
 	"github.com/syrull/pluto/internal/reposcan"
+	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/skills"
 	"github.com/syrull/pluto/internal/tool"
 	"github.com/syrull/pluto/internal/tools"
 	"github.com/syrull/pluto/internal/tui"
 	"github.com/syrull/pluto/internal/update"
+	"github.com/syrull/pluto/internal/worker"
 )
 
 // version is the build version, injected via -ldflags at release time and
@@ -131,12 +134,32 @@ func main() {
 
 	provider := selectProvider()
 	gate, judgeProvider := buildGate()
+
+	// One summarizer, shared by the agents (context compaction), the TUI (agent
+	// auto-labeling), and the worker pool (worker context compaction); nil when it
+	// can't authenticate.
+	summarizer, summarizerProvider := buildSummarizer()
+
+	// Parallel worker sub-agents (see internal/worker): the pool scopes each worker
+	// from a snapshot of the current tools (built-ins + MCP) so a worker can be
+	// granted any of them except the dispatch tool itself, and shares the review
+	// gate so scope/judge context propagates to children. Registering the workers
+	// tool last keeps it out of that snapshot. The blackboard is the shared,
+	// append-only coordination substrate.
+	board := session.NewBlackboard()
+	pool := worker.NewPool(context.Background(), worker.Config{
+		Provider:  provider,
+		Registry:  cloneRegistry(reg),
+		Gate:      gate,
+		Summarize: summarizer,
+		SkillsDir: skills.DirName,
+		Board:     board,
+		Limits:    workerLimits(),
+	})
+	reg.MustRegister(worker.NewDispatchTool(pool))
+
 	systemPrompt := buildSystemPrompt(reg)
 	logConfig(provider, gate)
-
-	// One summarizer, shared by the agents (context compaction) and the TUI
-	// (agent auto-labeling); nil when it can't authenticate.
-	summarizer, summarizerProvider := buildSummarizer()
 
 	// The /goal completion evaluator: a small, fast, transcript-only model that
 	// judges the user's condition after each turn. nil when disabled (PLUTO_GOAL=off)
@@ -166,7 +189,7 @@ func main() {
 	// re-login leaves the judge on an expired token and the fail-safe policy
 	// blocks every command for the rest of the session.
 	loginHook := buildLoginHook(ag, auxReauthers(judgeProvider, summarizerProvider, evaluatorProvider)...)
-	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator, mcpSummary).Run(); err != nil {
+	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator, mcpSummary, pool).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
@@ -457,6 +480,41 @@ func contextLimit() int {
 		}
 	}
 	return 0
+}
+
+// cloneRegistry returns a new registry holding the same tools as r, so the
+// worker pool can scope workers from the tools available now (built-ins + MCP)
+// without ever exposing the dispatch tool that is registered into r afterward.
+func cloneRegistry(r *tool.Registry) *tool.Registry {
+	clone := tool.NewRegistry()
+	for _, t := range r.Tools() {
+		clone.MustRegister(t)
+	}
+	return clone
+}
+
+// workerLimits reads the fan-out safety budget from the environment so parallel
+// workers stay paced rather than portscan-shaped: PLUTO_WORKERS_MAX caps total
+// concurrency (default 8), PLUTO_WORKERS_PER_TARGET caps concurrency against one
+// scope (default 4), and PLUTO_WORKERS_RATE_MS spaces starts against one scope
+// (default 0 — no forced spacing).
+func workerLimits() worker.Limits {
+	return worker.Limits{
+		MaxWorkers: envInt("PLUTO_WORKERS_MAX", 8),
+		PerTarget:  envInt("PLUTO_WORKERS_PER_TARGET", 4),
+		Interval:   time.Duration(envInt("PLUTO_WORKERS_RATE_MS", 0)) * time.Millisecond,
+	}
+}
+
+// envInt reads a non-negative integer env var, falling back to def when unset or
+// invalid.
+func envInt(key string, def int) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return def
 }
 
 // buildGate constructs the auto-mode review gate and returns the judge's
