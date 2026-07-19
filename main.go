@@ -124,7 +124,7 @@ func main() {
 	// its tools are registered alongside the built-ins, and the connections stay
 	// open for the session. Best-effort — a missing config or an unreachable
 	// server is logged and skipped so pluto still starts.
-	mcpMgr := mcp.New(version)
+	mcpMgr := mcp.New(version).WithProgress(os.Stderr)
 	mcpSummary := mcpMgr.LoadWithDeadline(reg)
 	defer mcpMgr.Close()
 	logMCP(mcpSummary)
@@ -166,7 +166,7 @@ func main() {
 	// re-login leaves the judge on an expired token and the fail-safe policy
 	// blocks every command for the rest of the session.
 	loginHook := buildLoginHook(ag, auxReauthers(judgeProvider, summarizerProvider, evaluatorProvider)...)
-	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator).Run(); err != nil {
+	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator, mcpSummary).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)

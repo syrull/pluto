@@ -2,11 +2,14 @@ package tui
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/llm"
+	"github.com/syrull/pluto/internal/mcp"
 	"github.com/syrull/pluto/internal/tool"
 )
 
@@ -60,6 +63,79 @@ func TestInstallMCPRejectsGarbage(t *testing.T) {
 	}
 	if !strings.Contains(status, "GitHub repository") {
 		t.Fatalf("expected a repo-format hint, got %q", status)
+	}
+}
+
+func TestMCPStatusEmpty(t *testing.T) {
+	m := mcpModel()
+	status, cmd := m.handleCommand("/mcp")
+	if cmd != nil {
+		t.Fatal("/mcp should not start a turn")
+	}
+	if !strings.Contains(status, "no MCP servers configured") {
+		t.Fatalf("empty /mcp should say none configured, got %q", status)
+	}
+}
+
+func TestMCPStatusListsServers(t *testing.T) {
+	m := mcpModel()
+	m.mcpInfo = mcp.Summary{
+		ConfigPath: "/home/u/.pluto/mcp.json",
+		Servers:    1,
+		Tools:      2,
+		Failed:     []string{"broken"},
+		Statuses: []mcp.ServerStatus{
+			{Name: "github", Transport: "stdio", Tools: []string{"create_issue", "list_prs"}},
+			{Name: "broken", Transport: "http", Err: "connect failed"},
+			{Name: "old", Transport: "stdio", Disabled: true},
+		},
+	}
+	status, cmd := m.handleCommand("/mcp")
+	if cmd != nil {
+		t.Fatal("/mcp should not start a turn")
+	}
+	for _, want := range []string{
+		"/home/u/.pluto/mcp.json", "github", "create_issue", "list_prs",
+		"broken", "connect failed", "old", "disabled", "1 connected", "2 tool(s)", "1 failed",
+	} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("/mcp output missing %q:\n%s", want, status)
+		}
+	}
+}
+
+func TestSkillsStatusEmpty(t *testing.T) {
+	m := mcpModel()
+	m.workspaces = []*workspace{{id: 0, cwd: t.TempDir()}}
+	status, cmd := m.handleCommand("/skills")
+	if cmd != nil {
+		t.Fatal("/skills should not start a turn")
+	}
+	if !strings.Contains(status, "no skills found") {
+		t.Fatalf("empty /skills should say none found, got %q", status)
+	}
+}
+
+func TestSkillsStatusListsSkills(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills", "tidy")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: tidy\ndescription: clean up imports and formatting\n---\nRun gofmt.\n"
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := mcpModel()
+	m.workspaces = []*workspace{{id: 0, cwd: dir}}
+	status, cmd := m.handleCommand("/skills")
+	if cmd != nil {
+		t.Fatal("/skills should not start a turn")
+	}
+	for _, want := range []string{"skills (1)", "tidy", "clean up imports"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("/skills output missing %q:\n%s", want, status)
+		}
 	}
 }
 

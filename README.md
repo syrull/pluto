@@ -187,13 +187,19 @@ server a secret explicitly through its `env` block; nothing else leaks into the
 subprocess. Its stderr goes to the debug log, not the terminal, so it can't
 corrupt the TUI.
 
-Servers connect **once at startup**: each server's tools are registered as
-`mcp__<server>__<tool>` (namespaced so they never collide with built-ins or each
-other) and the connections stay open for the session. Loading is best-effort —
-a missing config is silent, and an unreachable server is logged and skipped so
-pluto still starts. Add a new server (or change one) and **restart pluto** to
-pick it up. Set `PLUTO_DEBUG=1 PLUTO_DEBUG_COMPONENTS=mcp` to trace the load,
-handshake, and every tool call.
+Servers connect **once at startup**: pluto prints a `loading N MCP server(s)…`
+notice before dialing (so a slow server doesn't look like a hang) and a
+`loaded N server(s), N tool(s)` line once done. Each server's tools are
+registered as `mcp__<server>__<tool>` (namespaced so they never collide with
+built-ins or each other) and the connections stay open for the session. Loading
+is best-effort — a missing config is silent, and an unreachable server is logged
+and skipped so pluto still starts. Add a new server (or change one) and
+**restart pluto** to pick it up. Set `PLUTO_DEBUG=1 PLUTO_DEBUG_COMPONENTS=mcp`
+to trace the load, handshake, and every tool call.
+
+Run `/mcp` at any time to list the configured servers with their transport,
+per-server tool count and names, plus any that failed or are disabled — read
+straight from the startup load, so it reflects exactly what the session has.
 
 Because an MCP tool is opaque third-party code with no shell command for the
 guard or judge to inspect, auto mode asks you to approve each MCP tool the first
@@ -218,6 +224,19 @@ into your `mcp.json` (preserving existing servers) or — when something needs a
 decision only you can make, like providing an API key or installing a runtime —
 **walks you through** the remaining steps rather than guessing. It never invents
 secrets. Restart pluto afterwards to load the new server.
+
+## Skills
+
+Skills are on-demand playbooks the agent can pull in only when a task calls for
+them. Each lives in its own folder under `skills/` in the working directory as a
+`SKILL.md` file: YAML frontmatter with a `name` and `description`, then Markdown
+instructions. Only the compact index (name + description) rides in the system
+prompt; the full body is loaded lazily via the `skill` tool, keeping the
+always-on prompt small (progressive disclosure).
+
+Run `/skills` to list the skills discovered under the active agent's directory
+with their descriptions — the same set the agent sees. Skills follow the active
+agent, so each worktree can carry its own.
 
 ## Debugging
 

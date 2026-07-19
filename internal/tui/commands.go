@@ -23,6 +23,8 @@ var slashCommands = []widgets.Command{
 	{Name: "/gh", Desc: "open the GitHub browser"},
 	{Name: "/image", Args: "<path>", Desc: "attach an image to your next message"},
 	{Name: "/install-mcp", Args: "<repo>", Desc: "install an MCP server from a GitHub repository"},
+	{Name: "/mcp", Desc: "list configured MCP servers and their tools"},
+	{Name: "/skills", Desc: "list the on-demand skills available to the agent"},
 }
 
 // backgroundCommands are the slash commands safe to run while the agent is

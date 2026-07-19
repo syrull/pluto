@@ -335,6 +335,12 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	case "/install-mcp":
 		return m.handleInstallMCP(line)
 
+	case "/mcp":
+		return m.mcpStatus(), nil
+
+	case "/skills":
+		return m.skillsStatus(), nil
+
 	case "/learn":
 		if len(fields) > 1 {
 			switch fields[1] {

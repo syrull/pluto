@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/syrull/pluto/internal/tool"
@@ -84,6 +85,47 @@ func TestManagerLoadRegistersStdioServer(t *testing.T) {
 	if _, ok := reg.Lookup("mcp__helper__beta"); !ok {
 		t.Errorf("beta tool not registered")
 	}
+	if len(s.Statuses) != 1 {
+		t.Fatalf("want 1 server status, got %d", len(s.Statuses))
+	}
+	st := s.Statuses[0]
+	if st.Name != "helper" || st.Transport != "stdio" || st.Err != "" || st.Disabled {
+		t.Fatalf("unexpected status %+v", st)
+	}
+	if len(st.Tools) != 2 || st.Tools[0] != "alpha" || st.Tools[1] != "beta" {
+		t.Fatalf("want [alpha beta] tool names, got %v", st.Tools)
+	}
+}
+
+func TestManagerProgressAnnouncesLoad(t *testing.T) {
+	writeConfig(t, map[string]ServerConfig{
+		"off":    {Command: "does-not-matter", Disabled: true},
+		"broken": {Command: "pluto-nonexistent-mcp-binary-xyz"},
+	})
+	var buf strings.Builder
+	mgr := New("test").WithProgress(&buf)
+	defer mgr.Close()
+
+	mgr.Load(context.Background(), tool.NewRegistry())
+	// The notice counts only the one enabled server, not the disabled one.
+	if got := buf.String(); !strings.Contains(got, "loading 1 MCP server(s)") {
+		t.Fatalf("progress notice = %q, want it to announce 1 server", got)
+	}
+}
+
+func TestManagerProgressQuietWithoutConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("PLUTO_MCP_CONFIG", "")
+
+	var buf strings.Builder
+	mgr := New("test").WithProgress(&buf)
+	defer mgr.Close()
+	mgr.Load(context.Background(), tool.NewRegistry())
+	if buf.Len() != 0 {
+		t.Fatalf("no config should stay quiet, got %q", buf.String())
+	}
 }
 
 func TestManagerSkipsDisabledAndReportsFailures(t *testing.T) {
@@ -104,6 +146,16 @@ func TestManagerSkipsDisabledAndReportsFailures(t *testing.T) {
 	}
 	if len(reg.Tools()) != 0 {
 		t.Fatalf("no tools should be registered, got %d", len(reg.Tools()))
+	}
+	byName := map[string]ServerStatus{}
+	for _, st := range s.Statuses {
+		byName[st.Name] = st
+	}
+	if off := byName["off"]; !off.Disabled || off.Err != "" {
+		t.Fatalf("disabled server status = %+v, want Disabled with no error", off)
+	}
+	if broken := byName["broken"]; broken.Disabled || broken.Err == "" {
+		t.Fatalf("failed server status = %+v, want a non-empty error and not disabled", broken)
 	}
 }
 

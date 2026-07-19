@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -11,6 +12,47 @@ import (
 
 // dbgMCP tags the /install-mcp command flow in the debug log.
 const dbgMCP = "mcp"
+
+// mcpStatus renders the /mcp status block from the startup load summary: the
+// loaded mcp.json, each configured server's transport and outcome (connected +
+// tool count, failed + reason, or disabled), and a tally with how to add more.
+func (m *model) mcpStatus() string {
+	s := m.mcpInfo
+	if s.ConfigPath == "" && len(s.Statuses) == 0 {
+		debug.Info(dbgMCP, "status shown", "config", "", "servers", 0)
+		return styleHint.Render("no MCP servers configured — add one with /install-mcp <repo> or create " + mcp.DefaultConfigPath())
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", styleReview.Render("◎ MCP servers"))
+	fmt.Fprintf(&b, "%s %s\n", styleHint.Render("config:"), truncCells(oneLine(s.ConfigPath), 200))
+	for _, st := range s.Statuses {
+		b.WriteString(mcpServerLine(st))
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "%s", styleHint.Render(fmt.Sprintf(
+		"%d connected · %d tool(s) · %d failed · restart pluto after editing mcp.json",
+		s.Servers, s.Tools, len(s.Failed))))
+	debug.Info(dbgMCP, "status shown", "config", s.ConfigPath, "servers", s.Servers, "tools", s.Tools, "failed", len(s.Failed))
+	return b.String()
+}
+
+// mcpServerLine renders one server's status row: a glyph, its name and
+// transport, and the outcome — connected servers also list their tool names.
+func mcpServerLine(st mcp.ServerStatus) string {
+	label := st.Name + " " + styleHint.Render("["+st.Transport+"]")
+	switch {
+	case st.Disabled:
+		return styleReview.Render("⚠ ") + label + styleHint.Render(" — disabled")
+	case st.Err != "":
+		return styleErr.Render("✗ ") + label + styleHint.Render(" — "+truncCells(oneLine(st.Err), 160))
+	default:
+		line := styleDone.Render("✓ ") + label + styleHint.Render(fmt.Sprintf(" · %d tool(s)", len(st.Tools)))
+		if len(st.Tools) > 0 {
+			line += "\n  " + styleHint.Render(truncCells(strings.Join(st.Tools, ", "), 200))
+		}
+		return line
+	}
+}
 
 // handleInstallMCP dispatches /install-mcp <repo>: it validates the repository
 // reference, then hands the agent a detailed install directive (explore the
