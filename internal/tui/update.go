@@ -360,7 +360,7 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 			m.agent.SetLearnMode(!m.agent.LearnMode())
 		}
 		if m.agent.LearnMode() {
-			m.notice = "✓ learn mode on — I'll explain Go and the codebase as we go"
+			m.notice = "✓ learn mode on — I'll figure out the project and explain it as we go"
 		} else {
 			m.notice = "✓ learn mode off"
 		}

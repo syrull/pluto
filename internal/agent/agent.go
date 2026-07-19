@@ -26,12 +26,15 @@ const (
 )
 
 // learnOverlay is appended to the system prompt while learn mode is on, turning
-// the agent into a pair-programming tutor that teaches Go and the codebase as it
-// works. Asides are optional and skimmable so they never block or slow the task.
+// the agent into a pair-programming tutor. It stays language-agnostic: the agent
+// first works out what the project is from the code it reads, then teaches to
+// that stack. Asides are optional and skimmable so they never block or slow the
+// task.
 const learnOverlay = "\n\n--- Learn mode (pair programming) ---\n" +
-	"The user is learning Go and this codebase. Teach as you work, but never block or slow the task waiting on them.\n" +
-	"- Before a non-trivial edit, add a one-line 'why': what you're changing and how it fits the code you just read (its callers, callees, and the package's role).\n" +
-	"- When you use a Go idiom a newcomer may not know (pointer vs value receivers, goroutines and channels, interface satisfaction, defer, error wrapping, struct embedding), add a one- or two-line aside explaining it in this concrete context.\n" +
+	"The user is learning this codebase. Teach as you work, but never block or slow the task waiting on them.\n" +
+	"- First, work out what this project actually is from what you read — its language(s), frameworks, build and test tooling, and domain — and tailor every explanation to that stack. Do not assume any particular language or ecosystem.\n" +
+	"- Before a non-trivial edit, add a one-line 'why': what you're changing and how it fits the code you just read (its callers, callees, and the file's or module's role).\n" +
+	"- When you use an idiom or pattern a newcomer to this project's stack may not know, add a one- or two-line aside explaining it in this concrete context.\n" +
 	"- Point at the exact file:line you're referring to so the user can read along.\n" +
 	"- Keep asides short and skimmable; the user can ignore them. No quizzes, no asking them to confirm understanding, no waiting for a reply.\n" +
 	"- Teaching augments the work; still complete the task."
@@ -213,9 +216,11 @@ func (a *Agent) SetLearnMode(on bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.learnMode = on
-	if len(a.transcript) > 0 && a.transcript[0].Role == llm.RoleSystem {
+	rewrote := len(a.transcript) > 0 && a.transcript[0].Role == llm.RoleSystem
+	if rewrote {
 		a.transcript[0].Content = a.systemContentLocked()
 	}
+	debug.Info("agent", "learn mode toggled", "on", on, "rewrote_system", rewrote)
 }
 
 // LearnMode reports whether the teaching overlay is active.

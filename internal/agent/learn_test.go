@@ -37,6 +37,15 @@ func TestSetLearnModeTogglesSystemOverlay(t *testing.T) {
 	}
 }
 
+func TestLearnOverlayIsLanguageAgnostic(t *testing.T) {
+	if strings.Contains(learnOverlay, "Go") {
+		t.Fatalf("learn overlay should not hard-code a language, got:\n%s", learnOverlay)
+	}
+	if !strings.Contains(learnOverlay, "what this project actually is") {
+		t.Fatalf("learn overlay should tell the agent to explore the project first, got:\n%s", learnOverlay)
+	}
+}
+
 func TestLearnModePersistsAcrossReset(t *testing.T) {
 	a := newTestAgent(t)
 	a.SetLearnMode(true)
