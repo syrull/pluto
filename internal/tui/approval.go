@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/syrull/pluto/internal/agent"
 	"github.com/syrull/pluto/internal/debug"
@@ -15,22 +14,47 @@ import (
 	"github.com/syrull/pluto/internal/tui/widgets"
 )
 
-// Approver bridges an agent's blocking approval request (a judge outage, or a
-// first call to an external MCP tool) to the interactive TUI. The agent
-// goroutine calls Approve, which hands the request to the model over a channel
-// and blocks on a reply; the model renders a prompt and sends the user's choice
-// back. One Approver is shared by every agent, so simultaneous requests queue and
-// are answered one at a time.
+// Approver bridges an agent's blocking approval request (a judge outage) to the
+// interactive TUI. The agent goroutine calls Approve, which hands the request to
+// the model over a channel and blocks on a reply; the model routes the request to
+// the workspace that raised it and prompts the user only while that agent is in
+// front, so a background agent's approval never hijacks the one on screen. One
+// Approver is shared by every agent; each request carries the id of the agent it
+// belongs to (see agentIDKey), so the model can hold one pending approval per
+// agent simultaneously.
 type Approver struct {
 	requests chan *approvalRequest
 }
 
-// approvalRequest is one pending human-in-the-loop decision: the proposed call,
-// the review that flagged it, and the channel the model replies on.
+// approvalRequest is one pending human-in-the-loop decision: the id of the agent
+// that raised it, the proposed call, the review that flagged it, and the channel
+// the model replies on.
 type approvalRequest struct {
+	id    int
 	call  llm.ToolCall
 	rr    agent.ReviewResult
 	reply chan agent.ApprovalDecision
+}
+
+// agentIDKey carries the raising agent's workspace id on the Run context so the
+// Approver can tag each request and the TUI can route it to the owning agent.
+type agentIDKey struct{}
+
+// withAgentID returns ctx carrying the workspace id id.
+func withAgentID(ctx context.Context, id int) context.Context {
+	return context.WithValue(ctx, agentIDKey{}, id)
+}
+
+// agentIDFrom returns the workspace id carried by ctx, or 0 when none is set (the
+// bare/test model, or a single-agent run).
+func agentIDFrom(ctx context.Context) int {
+	if ctx == nil {
+		return 0
+	}
+	if id, ok := ctx.Value(agentIDKey{}).(int); ok {
+		return id
+	}
+	return 0
 }
 
 // NewApprover builds an Approver ready to wire into agents (agent.WithApprover)
@@ -40,9 +64,10 @@ func NewApprover() *Approver {
 }
 
 // Approve implements agent.Approver, blocking until the user answers or ctx is
-// canceled (e.g. the run is interrupted).
+// canceled (e.g. the run is interrupted). The request is tagged with the raising
+// agent's id (from ctx) so the model prompts only on that agent.
 func (a *Approver) Approve(ctx context.Context, call llm.ToolCall, rr agent.ReviewResult) (agent.ApprovalDecision, error) {
-	req := &approvalRequest{call: call, rr: rr, reply: make(chan agent.ApprovalDecision, 1)}
+	req := &approvalRequest{id: agentIDFrom(ctx), call: call, rr: rr, reply: make(chan agent.ApprovalDecision, 1)}
 	select {
 	case a.requests <- req:
 	case <-ctx.Done():
@@ -71,25 +96,27 @@ func listenApproval(a *Approver) tea.Cmd {
 	}
 }
 
-// answerApproval resolves the pending approval with the user's choice, sends it
-// back to the blocked agent, and re-arms the listener for the next request.
+// answerApproval resolves the active agent's pending approval with the user's
+// choice and sends it back to that blocked agent. The listener is re-armed when
+// each request arrives (see the approvalReqMsg handler), not here, so answering
+// one agent never disturbs another agent's still-pending prompt.
 func (m *model) answerApproval(choice agent.ApprovalChoice) tea.Cmd {
 	req := m.approval
 	m.approval = nil
 	if req == nil {
-		return listenApproval(m.approver)
+		return nil
 	}
 	dec := agent.ApprovalDecision{Choice: choice}
 	if choice == agent.ApprovalPattern {
 		dec.Pattern = req.rr.Pattern
 	}
 	cmd, _, _ := approvalArgs(req.call)
-	debug.Info(dbgTUI, "approval decision", "choice", approvalChoiceName(choice),
+	debug.Info(dbgTUI, "approval decision", "id", req.id, "choice", approvalChoiceName(choice),
 		"tool", req.call.Name, "cmd", truncCells(oneLine(cmd), 200), "pattern", truncCells(dec.Pattern, 200))
 	req.reply <- dec
 	m.notice = approvalNotice(choice, dec.Pattern)
 	m.syncViewport()
-	return listenApproval(m.approver)
+	return nil
 }
 
 // approvalArgs extracts the command, intent, and why from a bash tool call.
@@ -127,12 +154,13 @@ func approvalNotice(choice agent.ApprovalChoice, pattern string) string {
 	}
 }
 
-// renderApprovalPrompt renders the human-in-the-loop approval as a centered
-// overlay showing the call, the pattern an "allow" would remember, and the three
-// keybindings. A bash call shows its command plus intent/why; any other tool
-// (e.g. an external MCP tool) shows its name and a JSON argument preview.
-func renderApprovalPrompt(width, height int, req *approvalRequest) string {
-	inner := width - 8
+// renderApprovalPrompt renders the human-in-the-loop approval as an inline box in
+// the conversation flow (just above the still-live input, not a full-screen
+// takeover) showing the call, the pattern an "allow" would remember, and the
+// three keybindings. A bash call shows its command plus intent/why; any other
+// tool shows its name and a JSON argument preview.
+func renderApprovalPrompt(width int, req *approvalRequest) string {
+	inner := width
 	if inner < 24 {
 		inner = 24
 	}
@@ -176,11 +204,7 @@ func renderApprovalPrompt(width, height int, req *approvalRequest) string {
 	b.WriteString("\n\n")
 	b.WriteString(approvalOptionsLine())
 
-	box := styleModalBox.Width(inner).Render(b.String())
-	if width > 0 && height > 0 {
-		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
-	}
-	return box
+	return styleModalBox.Width(inner).Render(b.String())
 }
 
 // approvalOptionsLine renders the three keybinding chips.

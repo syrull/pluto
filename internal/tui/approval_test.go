@@ -94,13 +94,10 @@ func TestAnswerApprovalYes(t *testing.T) {
 		reply: reply,
 	}
 
-	cmd := m.answerApproval(agent.ApprovalYes)
+	m.answerApproval(agent.ApprovalYes)
 
 	if m.approval != nil {
 		t.Fatal("answering should clear the pending approval")
-	}
-	if cmd == nil {
-		t.Fatal("answering should re-arm the approval listener")
 	}
 	dec := <-reply
 	if dec.Choice != agent.ApprovalYes || dec.Pattern != "" {
@@ -172,16 +169,74 @@ func TestApprovalEscDenies(t *testing.T) {
 
 func TestApprovalPromptRenders(t *testing.T) {
 	m := multiModel(1)
-	m.width, m.height, m.ready = 100, 40, true
-	m.approval = &approvalRequest{
+	var tm tea.Model = *m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	mm := tm.(model)
+	mm.showHome = false // an in-flight turn has left the launch dashboard
+	mm.approval = &approvalRequest{
 		call: approvalBashCall("go test ./..."),
 		rr:   agent.ReviewResult{Pattern: "go test", Reason: "judge unavailable"},
 	}
-	out := m.content()
+	// The prompt rides inline at the bottom of the active agent's transcript, so
+	// the footer/input pane stays on screen rather than being taken over.
+	mm.syncViewport()
+	out := mm.content()
 	for _, want := range []string{"go test ./...", "approve this command", "yes", "allow this pattern", "no", "go test"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("approval prompt missing %q:\n%s", want, out)
 		}
+	}
+	if !strings.Contains(out, "›") {
+		t.Fatalf("approval should keep the input footer visible, not take over the screen:\n%s", out)
+	}
+}
+
+func TestApprovalRoutedToRaisingAgent(t *testing.T) {
+	m := multiModel(2)
+	m.approver = NewApprover()
+	var tm tea.Model = *m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	// A background agent (id 1, not active) raises an approval.
+	req := &approvalRequest{id: 1, call: approvalBashCall("go test ./..."), rr: agent.ReviewResult{Pattern: "go test"}}
+	tm, cmd := tm.Update(approvalReqMsg{req: req})
+	mm := tm.(model)
+
+	if mm.approval != nil {
+		t.Fatal("a background agent's approval must not prompt on the active agent")
+	}
+	if mm.workspaces[1].approval != req {
+		t.Fatal("a background agent's approval should be parked on its own workspace")
+	}
+	if !mm.workspaces[1].unread {
+		t.Fatal("a parked approval should flag the agent as unread")
+	}
+	if cmd == nil {
+		t.Fatal("receiving a request should re-arm the listener so other agents can queue")
+	}
+
+	// Switching to that agent surfaces its parked prompt.
+	mm.switchTo(1)
+	if mm.approval != req {
+		t.Fatal("switching to the raising agent should surface its pending approval")
+	}
+}
+
+func TestApprovalActiveAgentPromptsImmediately(t *testing.T) {
+	m := multiModel(2)
+	m.approver = NewApprover()
+	var tm tea.Model = *m
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	req := &approvalRequest{id: 0, call: approvalBashCall("go test ./..."), rr: agent.ReviewResult{Pattern: "go test"}}
+	tm, _ = tm.Update(approvalReqMsg{req: req})
+	mm := tm.(model)
+
+	if mm.approval != req {
+		t.Fatal("the active agent's approval should prompt immediately")
+	}
+	if mm.workspaces[0].unread {
+		t.Fatal("the active agent's approval should not mark it unread")
 	}
 }
 

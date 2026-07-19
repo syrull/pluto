@@ -101,6 +101,12 @@ Only a *judge error* triggers the prompt — a guard block or an explicit judge
 (a background or headless run), pluto falls back to the non-interactive policy set
 by `PLUTO_AUTO_ON_JUDGE_ERR` (`block` by default, `allow` to fail open).
 
+The prompt is **per-agent**: it appears inline at the bottom of the transcript of
+the agent that raised it, with the input box still on screen, and is answered with
+`y`/`a`/`n` there. A background agent's prompt never takes over the agent you are
+looking at — it waits on that agent (flagged unread in the Agents pane) until you
+switch to it.
+
 ## Goals (keep working until a condition is met)
 
 Normally the agent stops when *it* decides the work is done. `/goal <condition>`

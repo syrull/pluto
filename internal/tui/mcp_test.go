@@ -144,7 +144,7 @@ func TestApprovalPromptRendersMCPCall(t *testing.T) {
 		call: llm.ToolCall{Name: "mcp__github__create_issue", Args: json.RawMessage(`{"title":"x"}`)},
 		rr:   agent.ReviewResult{Source: "mcp", Pattern: "mcp__github__create_issue"},
 	}
-	out := renderApprovalPrompt(80, 24, req)
+	out := renderApprovalPrompt(80, req)
 	if !strings.Contains(out, "MCP tool") {
 		t.Fatalf("MCP approval prompt missing its header: %q", out)
 	}

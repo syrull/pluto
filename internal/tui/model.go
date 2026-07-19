@@ -202,8 +202,11 @@ type model struct {
 	ghm *ghModal
 
 	// approver bridges an agent's blocking judge-error approval request to this UI;
-	// approval is the request currently prompting the user, if any. Both are nil in
-	// the bare/test model and for background/headless runs, which fall back to the
+	// approval mirrors the active workspace's pending request (if any), rendered
+	// inline in that agent's transcript. A background agent's request is parked on
+	// its own workspace (workspace.approval) and only surfaces once that agent is in
+	// front, so it never blocks the agent on screen. approver is nil in the
+	// bare/test model and for background/headless runs, which fall back to the
 	// OnJudgeError policy instead of prompting.
 	approver *Approver
 	approval *approvalRequest
@@ -260,6 +263,10 @@ type workspace struct {
 	cancel context.CancelFunc
 	unread bool // background progress since last viewed
 	goal   *goalState
+	// approval is this agent's pending human-in-the-loop decision (a judge outage),
+	// held per-agent so a background agent's prompt never blocks the one on screen;
+	// the model's live m.approval mirrors the active workspace's.
+	approval *approvalRequest
 
 	showHome    bool
 	git         gitInfo
@@ -412,6 +419,11 @@ func (m model) transcript() string {
 	body := strings.Join(parts, "\n")
 	if live := m.liveRegion(); live != "" {
 		body += "\n" + live
+	}
+	// The active agent's pending approval rides at the bottom of its own transcript
+	// (a background agent's is parked on its workspace until it comes to the front).
+	if m.approval != nil {
+		body += "\n" + renderApprovalPrompt(m.contentWidth(), m.approval)
 	}
 	return body
 }

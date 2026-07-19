@@ -37,7 +37,9 @@ func (m *model) runAgent(input string, attachments []llm.Attachment) tea.Cmd {
 	ag := m.agent
 	ch := make(chan eventMsg, 16)
 	m.events = ch
-	ctx, cancel := context.WithCancel(workdir.With(context.Background(), m.activeCwd()))
+	// Tag the run context with the agent id so a blocking approval request is
+	// routed back to this agent's transcript, not whichever agent is on screen.
+	ctx, cancel := context.WithCancel(withAgentID(workdir.With(context.Background(), m.activeCwd()), id))
 	m.cancel = cancel
 	go func() {
 		defer close(ch)
@@ -114,6 +116,9 @@ func (m *model) finishTurn() ([]agent.SteerMessage, tea.Cmd) {
 	m.busy = false
 	m.events = nil
 	m.cancel = nil
+	// A run only ends once any approval it was blocked on is resolved (or its
+	// context was canceled), so drop a lingering prompt for this agent.
+	m.approval = nil
 	label := m.maybeLabel(m.active)
 	pending := m.agent.TakeSteering()
 	m.syncViewport()
@@ -783,17 +788,31 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case approvalReqMsg:
-		// The requesting agent goroutine is blocked in Approve until the user
-		// answers; render the prompt and wait. The listener is re-armed only after
-		// the decision (answerApproval), so queued requests are handled one at a time.
-		m.approval = msg.req
+		// The requesting agent goroutine is blocked in Approve until answered. Route
+		// the request to the agent that raised it: prompt now when that's the active
+		// agent, otherwise park it on the owning workspace so it surfaces (and flags
+		// the Agents pane) without disturbing the agent on screen. Re-arm the listener
+		// immediately so another agent can raise its own request in parallel.
+		i := m.workspaceIndex(msg.req.id)
 		cmd, intent, why := approvalArgs(msg.req.call)
-		debug.Info(dbgTUI, "approval prompt shown",
+		if len(m.workspaces) > 0 && i >= 0 && i != m.active {
+			m.workspaces[i].approval = msg.req
+			m.workspaces[i].unread = true
+			debug.Info(dbgTUI, "approval prompt parked (background)", "id", msg.req.id,
+				"tool", msg.req.call.Name, "cmd", truncCells(oneLine(cmd), 200),
+				"pattern", truncCells(msg.req.rr.Pattern, 200), "reason", msg.req.rr.Reason)
+			return m, listenApproval(m.approver)
+		}
+		m.approval = msg.req
+		debug.Info(dbgTUI, "approval prompt shown", "id", msg.req.id,
 			"tool", msg.req.call.Name, "cmd", truncCells(oneLine(cmd), 200),
 			"intent", truncCells(oneLine(intent), 120), "why", truncCells(oneLine(why), 120),
 			"pattern", truncCells(msg.req.rr.Pattern, 200), "reason", msg.req.rr.Reason)
 		m.syncViewport()
-		return m, nil
+		if m.ready {
+			m.vp.GotoBottom()
+		}
+		return m, listenApproval(m.approver)
 
 	case bashInlineMsg:
 		// Drop a result from a canceled or superseded inline run.

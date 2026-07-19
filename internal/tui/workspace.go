@@ -83,6 +83,7 @@ func (m *model) stash(i int) {
 	w.events = m.events
 	w.cancel = m.cancel
 	w.goal = m.goal
+	w.approval = m.approval
 	w.showHome = m.showHome
 	w.git = m.git
 	w.gitReady = m.gitReady
@@ -117,6 +118,7 @@ func (m *model) unstash(i int) {
 	m.events = w.events
 	m.cancel = w.cancel
 	m.goal = w.goal
+	m.approval = w.approval
 	m.showHome = w.showHome
 	m.git = w.git
 	m.gitReady = w.gitReady
