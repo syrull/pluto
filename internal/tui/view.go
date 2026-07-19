@@ -361,20 +361,11 @@ func (m model) modelStatus() string {
 	return line
 }
 
-// shortModelName compacts a provider name for the status line, e.g.
-// "anthropic/claude-opus-4-8" → "opus4-8". It strips the "anthropic/" and
-// "claude-" prefixes and joins the family to its version (dropping the first
-// hyphen). Names without the anthropic prefix are returned unchanged.
+// shortModelName renders the full model name for the status line, dropping only
+// the "anthropic/" provider prefix, e.g. "anthropic/claude-opus-4-8" →
+// "claude-opus-4-8". Names without the anthropic prefix are returned unchanged.
 func shortModelName(name string) string {
-	if !strings.HasPrefix(name, "anthropic/") {
-		return name
-	}
-	s := strings.TrimPrefix(name, "anthropic/")
-	s = strings.TrimPrefix(s, "claude-")
-	if i := strings.IndexByte(s, '-'); i >= 0 {
-		s = s[:i] + s[i+1:]
-	}
-	return s
+	return strings.TrimPrefix(name, "anthropic/")
 }
 
 // thinkStatusText renders the extended-thinking level compactly for the status

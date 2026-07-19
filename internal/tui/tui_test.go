@@ -563,9 +563,9 @@ func TestModelStatusContextWindow(t *testing.T) {
 
 func TestShortModelName(t *testing.T) {
 	cases := map[string]string{
-		"anthropic/claude-opus-4-8":  "opus4-8",
-		"anthropic/claude-sonnet-5":  "sonnet5",
-		"anthropic/claude-haiku-4-5": "haiku4-5",
+		"anthropic/claude-opus-4-8":  "claude-opus-4-8",
+		"anthropic/claude-sonnet-5":  "claude-sonnet-5",
+		"anthropic/claude-haiku-4-5": "claude-haiku-4-5",
 		"stub-echo":                  "stub-echo",
 		"no provider":                "no provider",
 	}
