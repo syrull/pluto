@@ -73,13 +73,13 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 	if cfg.Mode == ModeOff {
 		return agent.ReviewResult{Allowed: true, Source: "off"}
 	}
-	// External MCP tools are third-party code with no shell command for the guard
-	// or judge to inspect, so they take a dedicated approval path rather than the
-	// bash review below. Built-in non-bash tools (read/write/edit/…) stay on the
-	// fast path.
+	// External MCP tools are third-party code with no shell command, so they take a
+	// dedicated path that has the judge assess the tool call and its arguments
+	// rather than the bash review below. Built-in non-bash tools (read/write/edit/…)
+	// stay on the fast path.
 	if call.Name != "bash" {
 		if mcp.IsToolName(call.Name) {
-			return g.reviewMCP(call)
+			return g.reviewMCP(ctx, cfg, j, call)
 		}
 		return agent.ReviewResult{Allowed: true, Source: "fast-path"}
 	}
@@ -167,25 +167,80 @@ func verdictResult(v judge.Verdict) agent.ReviewResult {
 	}
 }
 
-// reviewMCP gates a call to an external MCP server tool. Since there is no shell
-// command for the guard/judge to reason about, pluto asks the human to approve
-// each distinct MCP tool the first time it runs; approving "this pattern"
-// allowlists that tool for the rest of the session. With no approver wired
-// (background/headless) the call is blocked as a fail-safe, so an unattended run
-// never fires an unreviewed external tool.
-func (g *ReviewGate) reviewMCP(call llm.ToolCall) agent.ReviewResult {
+// reviewMCP gates a call to an external MCP server tool. An MCP tool has no shell
+// command, so instead of prompting a human it hands the tool call and its
+// arguments to the judge — the same automatic model that reviews bash — and
+// enforces the verdict. Verdicts are memoized like bash. A tool the human already
+// allowlisted this session skips the judge. Only two cases still defer to a human:
+// the judge is absent (guard-only mode) or it errored, both handled as
+// needs-approval so an unattended run with no approver blocks as a fail-safe.
+func (g *ReviewGate) reviewMCP(ctx context.Context, cfg Config, j judge.Judge, call llm.ToolCall) agent.ReviewResult {
 	if g.allowed(call.Name) {
 		debug.Info("policy", "mcp allowlist match", "tool", call.Name)
 		return agent.ReviewResult{Allowed: true, Source: "allowlist"}
 	}
-	debug.Info("policy", "mcp tool needs approval", "tool", call.Name)
-	return agent.ReviewResult{
-		Allowed:       false,
-		NeedsApproval: true,
-		Source:        "mcp",
-		Reason:        "external MCP tool — approve to run it this session",
-		Pattern:       call.Name,
+	if j == nil {
+		debug.Info("policy", "mcp needs approval (guard-only)", "tool", call.Name)
+		return agent.ReviewResult{
+			Allowed:       false,
+			NeedsApproval: true,
+			Source:        "mcp",
+			Reason:        "external MCP tool — approve to run it this session",
+			Pattern:       call.Name,
+		}
 	}
+
+	dir := workdir.From(ctx)
+	if dir == "" {
+		dir = cwd()
+	}
+	desc := mcpCommand(call)
+	key := verdictKey(desc, dir)
+	if verdict, ok := g.cacheGet(key); ok {
+		debug.Debug("policy", "mcp judge cache hit", "tool", call.Name, "cwd", dir,
+			"decision", string(verdict.Decision), "risk", verdict.Risk)
+		return verdictResult(verdict)
+	}
+	debug.Debug("policy", "mcp judge review", "tool", call.Name, "cwd", dir)
+	timer := debug.NewTimer("policy", "mcp judge verdict")
+	verdict, err := j.Assess(ctx, judge.Request{Command: desc, Intent: mcpIntent(call), Cwd: dir})
+	if err != nil {
+		// Defer to a human when one can answer; a background/headless agent falls
+		// back to the OnJudgeError decision (carried in Allowed). Never cache errors.
+		allowed := cfg.OnJudgeError == judge.DecisionAllow
+		timer.Stop("outcome", "error", "fallback_allowed", allowed, "err", err)
+		debug.Warn("policy", "mcp judge error → needs approval", "tool", call.Name, "fallback_allowed", allowed)
+		return agent.ReviewResult{
+			Allowed:       allowed,
+			NeedsApproval: true,
+			Source:        "judge-error",
+			Reason:        "judge unavailable — approve to run",
+			Pattern:       call.Name,
+		}
+	}
+	timer.Stop("decision", string(verdict.Decision), "risk", verdict.Risk)
+	g.cachePut(key, verdict)
+	debug.Info("policy", "mcp judge verdict", "tool", call.Name,
+		"decision", string(verdict.Decision), "risk", verdict.Risk, "reason", verdict.Reason)
+	return verdictResult(verdict)
+}
+
+// mcpCommand renders an external MCP tool call as a single line for the judge: the
+// namespaced tool name plus its JSON arguments, which is the whole of what there
+// is to review since an MCP tool carries no shell command.
+func mcpCommand(call llm.ToolCall) string {
+	args := strings.TrimSpace(string(call.Args))
+	if args == "" || args == "{}" {
+		return call.Name
+	}
+	return call.Name + " " + args
+}
+
+// mcpIntent tells the judge the reviewed action is an external MCP tool call, so
+// it assesses the tool and its arguments rather than reading the line as a shell
+// command.
+func mcpIntent(call llm.ToolCall) string {
+	return "External MCP tool call: " + call.Name
 }
 
 // cacheGet reads a memoized verdict under the gate's lock.

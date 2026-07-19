@@ -207,11 +207,13 @@ Run `/mcp` at any time to list the configured servers with their transport,
 per-server tool count and names, plus any that failed or are disabled — read
 straight from the startup load, so it reflects exactly what the session has.
 
-Because an MCP tool is opaque third-party code with no shell command for the
-guard or judge to inspect, auto mode asks you to approve each MCP tool the first
-time the agent calls it (`y` once, `a` to allow that tool for the rest of the
-session, `n` to block) — the same prompt used for `bash`. Approvals are skipped
-entirely when auto mode is off (`PLUTO_AUTO=off`).
+An MCP tool has no shell command, so auto mode hands the **tool call and its
+arguments to the same judge** that reviews `bash` and enforces its verdict —
+allowing safe calls and blocking genuinely dangerous ones automatically, without
+interrupting you. Verdicts are memoized like `bash`. Only two cases still fall
+back to the human approval prompt: the judge is unavailable (guard-only mode) or
+it errored on that call. Review is skipped entirely when auto mode is off
+(`PLUTO_AUTO=off`).
 
 ### Installing a server from a repo
 

@@ -121,26 +121,73 @@ func mcpCall(name string) llm.ToolCall {
 	return llm.ToolCall{Name: name, Args: json.RawMessage(`{"q":"x"}`)}
 }
 
-func TestReviewMCPToolNeedsApproval(t *testing.T) {
-	g := newGate(t, judge.Fake{}, nil)
+func TestReviewMCPJudgeAllows(t *testing.T) {
+	g := newGate(t, judge.Fake{Verdict: judge.Verdict{Decision: judge.DecisionAllow, Risk: "low"}}, nil)
+	rr := g.Review(context.Background(), mcpCall("mcp__github__get_issue"))
+	if !rr.Allowed || rr.Source != "judge" {
+		t.Fatalf("MCP review = %+v, want allowed via judge", rr)
+	}
+	if rr.NeedsApproval {
+		t.Fatalf("an MCP call the judge cleared must not ask for human approval, got %+v", rr)
+	}
+}
+
+func TestReviewMCPJudgeBlocks(t *testing.T) {
+	g := newGate(t, judge.Fake{Verdict: judge.Verdict{Decision: judge.DecisionBlock, Risk: "high", Reason: "destructive"}}, nil)
+	rr := g.Review(context.Background(), mcpCall("mcp__github__delete_repo"))
+	if rr.Allowed || rr.Source != "judge" || rr.Reason != "destructive" {
+		t.Fatalf("MCP review = %+v, want blocked via judge", rr)
+	}
+}
+
+func TestReviewMCPAllowlistedSkipsJudge(t *testing.T) {
+	called := false
+	j := judgeFunc(func() (judge.Verdict, error) { called = true; return judge.Verdict{Decision: judge.DecisionBlock}, nil })
+	g := newGate(t, j, nil)
+	g.Allow("mcp__github__create_issue")
+	if rr := g.Review(context.Background(), mcpCall("mcp__github__create_issue")); !rr.Allowed || rr.Source != "allowlist" {
+		t.Fatalf("allowlisted MCP review = %+v, want allowed via allowlist", rr)
+	}
+	if called {
+		t.Fatal("an allowlisted MCP tool must skip the judge")
+	}
+}
+
+func TestReviewMCPGuardOnlyNeedsApproval(t *testing.T) {
+	g := newGate(t, nil, nil) // no judge → no automatic reviewer to defer to
 	rr := g.Review(context.Background(), mcpCall("mcp__github__create_issue"))
 	if rr.Allowed || !rr.NeedsApproval || rr.Source != "mcp" {
-		t.Fatalf("MCP review = %+v, want blocked + needs-approval via mcp", rr)
+		t.Fatalf("guard-only MCP review = %+v, want needs-approval via mcp", rr)
 	}
 	if rr.Pattern != "mcp__github__create_issue" {
 		t.Fatalf("Pattern = %q, want the tool name", rr.Pattern)
 	}
 }
 
-func TestReviewMCPAllowlisted(t *testing.T) {
-	g := newGate(t, judge.Fake{}, nil)
-	g.Allow("mcp__github__create_issue")
-	if rr := g.Review(context.Background(), mcpCall("mcp__github__create_issue")); !rr.Allowed || rr.Source != "allowlist" {
-		t.Fatalf("allowlisted MCP review = %+v, want allowed via allowlist", rr)
+func TestReviewMCPJudgeErrorNeedsApproval(t *testing.T) {
+	g := newGate(t, judge.Fake{Err: errAssess}, nil)
+	rr := g.Review(context.Background(), mcpCall("mcp__github__create_issue"))
+	if !rr.NeedsApproval || rr.Source != "judge-error" {
+		t.Fatalf("MCP judge error = %+v, want needs-approval via judge-error", rr)
 	}
-	// A different MCP tool is not covered by the entry and still needs approval.
-	if rr := g.Review(context.Background(), mcpCall("mcp__github__delete_repo")); rr.Allowed || !rr.NeedsApproval {
-		t.Fatalf("unlisted MCP tool = %+v, want needs-approval", rr)
+	if rr.Pattern != "mcp__github__create_issue" {
+		t.Fatalf("Pattern = %q, want the tool name for allowlisting", rr.Pattern)
+	}
+}
+
+func TestReviewMCPVerdictMemoized(t *testing.T) {
+	calls := 0
+	j := judgeFunc(func() (judge.Verdict, error) { calls++; return judge.Verdict{Decision: judge.DecisionAllow}, nil })
+	g := newGate(t, j, nil)
+	call := mcpCall("mcp__github__get_issue")
+	if rr := g.Review(context.Background(), call); !rr.Allowed {
+		t.Fatalf("first MCP review = %+v, want allowed", rr)
+	}
+	if rr := g.Review(context.Background(), call); !rr.Allowed {
+		t.Fatalf("second MCP review = %+v, want allowed", rr)
+	}
+	if calls != 1 {
+		t.Fatalf("judge called %d times, want 1 (verdict should be memoized)", calls)
 	}
 }
 
