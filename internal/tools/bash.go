@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/tool"
 	"github.com/syrull/pluto/internal/workdir"
 )
@@ -82,10 +83,16 @@ func (Bash) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", a.Command)
 	cmd.Dir = workdir.From(ctx)
+	// Detach from the controlling terminal so an interactive program (sudo, ssh, a
+	// passphrase prompt) can't grab the TUI's terminal and leak its prompt and the
+	// typed password into the input box; it fails cleanly ("no tty present") and the
+	// model sees the failure instead. Stdin is left nil (the null device).
+	cmd.SysProcAttr = detachSysProcAttr()
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
+	debug.Debug("tool", "bash exec", "detached", cmd.SysProcAttr != nil, "cmd", truncate(a.Command, 200))
 	err := cmd.Run()
 	out := capOutput(buf.String())
 
@@ -130,10 +137,14 @@ func RunInline(ctx context.Context, command string) string {
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = workdir.From(ctx)
+	// Detach from the controlling terminal (see Execute) so an interactive prompt
+	// can't hijack the TUI's terminal and leak into the input box.
+	cmd.SysProcAttr = detachSysProcAttr()
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 
+	debug.Debug("tool", "inline exec", "detached", cmd.SysProcAttr != nil, "cmd", truncate(command, 200))
 	err := cmd.Run()
 	out := buf.String()
 	switch {
@@ -151,6 +162,15 @@ func RunInline(ctx context.Context, command string) string {
 // bashMaxBytes bounds the size of returned command output. Unbounded output
 // (e.g. a recursive grep) can otherwise overflow the model context window.
 const bashMaxBytes = 32 * 1024
+
+// truncate bounds a command string for a log field.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
 
 // capOutput truncates output to bashMaxBytes, keeping the tail — the end of a
 // command's output (final errors, summaries) is usually the most relevant.

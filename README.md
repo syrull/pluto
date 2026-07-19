@@ -71,6 +71,12 @@ blocks catastrophic commands outright, and an LLM **judge** assesses the rest.
 Trivially safe read-only commands take a fast path and skip the judge. Toggle the
 whole thing with `/auto on|off`.
 
+Every command (and every inline `!` command) runs **detached from the terminal**,
+in its own session with no controlling TTY. So a program that would prompt
+interactively — `sudo`, `ssh`, a git passphrase — can't seize the terminal the TUI
+owns and spill its prompt and your keystrokes into the input box; it fails cleanly
+with "no tty present" and the model reacts to that instead.
+
 To avoid paying for a decision it already made, pluto **memoizes judge verdicts**
 in a small per-process LRU keyed by the normalized command and working directory
 (not the model-supplied intent/why, so those can't bust or poison the cache). A
