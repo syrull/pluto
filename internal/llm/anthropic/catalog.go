@@ -4,6 +4,7 @@ package anthropic
 var Models = []string{
 	"claude-opus-4-8",
 	"claude-sonnet-5",
+	"claude-fable-5",
 	"claude-haiku-4-5",
 }
 
@@ -20,6 +21,7 @@ const defaultContextWindow = 200_000
 var modelContextWindows = map[string]int{
 	"claude-opus-4-8":   1_000_000,
 	"claude-sonnet-5":   1_000_000,
+	"claude-fable-5":    1_000_000,
 	"claude-sonnet-4-5": 200_000,
 	"claude-haiku-4-5":  200_000,
 }
@@ -36,6 +38,7 @@ func contextWindowFor(model string) int {
 var modelVision = map[string]bool{
 	"claude-opus-4-8":   true,
 	"claude-sonnet-5":   true,
+	"claude-fable-5":    true,
 	"claude-sonnet-4-5": true,
 	"claude-haiku-4-5":  true,
 }
@@ -65,6 +68,7 @@ const (
 var modelThinkRegimes = map[string]thinkRegime{
 	"claude-opus-4-8":   regimeAdaptive,
 	"claude-sonnet-5":   regimeAdaptive,
+	"claude-fable-5":    regimeAdaptive,
 	"claude-sonnet-4-5": regimeLegacy,
 	"claude-haiku-4-5":  regimeLegacy,
 }
@@ -73,12 +77,14 @@ var modelThinkRegimes = map[string]thinkRegime{
 var modelsWithXHigh = map[string]bool{
 	"claude-opus-4-8": true,
 	"claude-sonnet-5": true,
+	"claude-fable-5":  true,
 	// claude-opus-4-7 would belong here if added to the catalog.
 }
 
 // modelAdaptiveDefaultOn is the set of adaptive models where thinking is ON by default.
 var modelAdaptiveDefaultOn = map[string]bool{
 	"claude-sonnet-5": true,
+	"claude-fable-5":  true,
 }
 
 // regimeFor returns the thinking regime for a model id.
