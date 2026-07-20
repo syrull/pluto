@@ -19,6 +19,7 @@ import (
 	"github.com/syrull/pluto/internal/mcp"
 	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
+	"github.com/syrull/pluto/internal/worker"
 )
 
 // eventMsg carries one agent Event to the UI, tagged with the id of the
@@ -246,6 +247,11 @@ type model struct {
 	// mcpInfo is the process-wide MCP load outcome captured at startup, shown by
 	// the /mcp command; zero-valued in the bare/test model.
 	mcpInfo mcp.Summary
+
+	// pool is the parallel worker sub-agent pool the agent dispatches to via the
+	// workers tool; the /workers command inspects it live. nil in the bare/test
+	// model and in a build without the pool wired.
+	pool *worker.Pool
 }
 
 // workspace is one agent's conversation and its UI state. The model's matching
@@ -374,7 +380,7 @@ func (m model) inputView() string {
 // no interactive approval); evaluator drives the /goal completion loop (nil ⇒
 // /goal degrades with a clear message); mcpInfo is the startup MCP load outcome
 // shown by /mcp.
-func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook, approver *Approver, evaluator goal.Evaluator, mcpInfo mcp.Summary) *tea.Program {
+func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook, approver *Approver, evaluator goal.Evaluator, mcpInfo mcp.Summary, pool *worker.Pool) *tea.Program {
 	cwd, _ := os.Getwd()
 	ws := &workspace{id: 0, cwd: cwd, agent: a, showHome: true}
 	m := model{
@@ -383,6 +389,7 @@ func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Co
 		workspaces: []*workspace{ws}, active: 0, nextID: 1,
 		newAgent: newAgent, summarize: summarize, approver: approver,
 		evaluator: evaluator, goalMaxTurns: goalMaxTurns(), mcpInfo: mcpInfo,
+		pool: pool,
 	}
 	return tea.NewProgram(m)
 }

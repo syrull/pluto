@@ -25,6 +25,7 @@ var slashCommands = []widgets.Command{
 	{Name: "/install-mcp", Args: "<repo>", Desc: "install an MCP server from a GitHub repository"},
 	{Name: "/mcp", Desc: "list configured MCP servers and their tools"},
 	{Name: "/skills", Desc: "list the on-demand skills available to the agent"},
+	{Name: "/workers", Args: "[id]", Desc: "show parallel worker sub-agents, or inspect one's transcript"},
 }
 
 // backgroundCommands are the slash commands safe to run while the agent is
@@ -33,8 +34,9 @@ var slashCommands = []widgets.Command{
 // rejected. Every entry must also appear in slashCommands (guarded by
 // TestBackgroundCommandsAreRegistered). All other commands wait until idle.
 var backgroundCommands = map[string]bool{
-	"/gh":   true, // opens the GitHub browser; never enters the conversation
-	"/auto": true, // toggles the judge/review gate, which is concurrency-safe
+	"/gh":      true, // opens the GitHub browser; never enters the conversation
+	"/auto":    true, // toggles the judge/review gate, which is concurrency-safe
+	"/workers": true, // reads the thread-safe worker pool for live observability
 }
 
 // runsInBackground reports whether the slash-command line may be dispatched

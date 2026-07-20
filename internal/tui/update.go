@@ -346,6 +346,12 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	case "/skills":
 		return m.skillsStatus(), nil
 
+	case "/workers":
+		if len(fields) > 1 {
+			return m.workerTranscript(fields[1]), nil
+		}
+		return m.workersStatus(), nil
+
 	case "/learn":
 		if len(fields) > 1 {
 			switch fields[1] {

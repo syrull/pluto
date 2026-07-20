@@ -50,6 +50,44 @@ fuzzy finder, and dashboard all follow the active agent's directory. `/new`
 clears only the active agent, and agents (with their transcripts and worktrees)
 persist across restarts via `/save` and `/resume`.
 
+## Parallel workers
+
+For work that fans out into independent branches — recon, payload iteration, and
+privilege escalation in a CTF; or building, testing, and doc-writing in a
+refactor — the agent can dispatch **parallel worker sub-agents** instead of
+grinding through the branches serially. The main agent stays the **orchestrator**:
+it keeps its full context, never blocks, and pulls back only concise structured
+results.
+
+It drives this through one non-blocking `workers` tool with three actions:
+
+- `dispatch` launches one or more workers and returns their ids immediately — the
+  orchestrator keeps reasoning while they run.
+- `poll` returns the current state, budget burn, and structured results of some
+  or all workers, on the orchestrator's own schedule (it never blocks).
+- `cancel` stops workers and reclaims their budget.
+
+Each worker is a lightweight agent loop in its **own goroutine** with its own
+conversation, a **least-privilege tool subset**, **preloaded skills** (so it is an
+instant specialist), and a **hard budget** (turns / tokens / wall-clock) that
+reaps a stuck or looping worker. Workers coordinate through a shared, append-only
+**blackboard**: each records findings (host, service, cred, foothold, vuln, flag,
+note) with a `note` tool, and can lease a unit of work so two workers don't
+duplicate it. The review gate (auto mode) is shared with the workers, so scope
+and judge decisions propagate to children instead of being re-fought per worker.
+
+Watch them live with **`/workers`** — a snapshot of every worker (`●` running,
+`✓` done, `✗` failed, `⚠` canceled) with its current tool, budget burn, and
+findings — and **`/workers <id>`** to inspect one worker's transcript. `/workers`
+is background-safe, so you can check on the fan-out while the orchestrator is
+still working. A full debug log (`PLUTO_DEBUG=1 PLUTO_DEBUG_COMPONENTS=worker,orchestrator`)
+reconstructs every worker end to end.
+
+Fan-out is paced so it doesn't look like a portscan-shaped alarm:
+`PLUTO_WORKERS_MAX` caps total concurrency (default 8), `PLUTO_WORKERS_PER_TARGET`
+caps concurrency against one scope (default 4), and `PLUTO_WORKERS_RATE_MS` spaces
+starts against one scope (default 0 — no forced spacing).
+
 ## Conversation pane
 
 In the chat pane, `↑`/`↓` (and `PgUp`/`PgDn`, `ctrl+u`/`ctrl+d`) always scroll the
@@ -60,9 +98,10 @@ past the newest entry. On a multi-line draft, `ctrl+p`/`ctrl+n` fall through to 
 editor and move the cursor between lines, so they never clobber an unsent draft.
 
 While a turn is in flight the input stays live: a plain message is queued to
-steer the running turn, and the background-safe commands `/gh` and `/auto` run
-immediately without interrupting it — `/auto off`, for instance, drops the judge
-mid-run. Every other slash command waits until the agent is idle.
+steer the running turn, and the background-safe commands `/gh`, `/auto`, and
+`/workers` run immediately without interrupting it — `/auto off`, for instance,
+drops the judge mid-run, and `/workers` watches the parallel fan-out while the
+orchestrator keeps going. Every other slash command waits until the agent is idle.
 
 ## Command review (auto mode)
 
@@ -279,7 +318,7 @@ API keys, auth headers) are never written** — they are redacted in the auth pa
 | `PLUTO_DEBUG` | `1`/`true`/`on` | off | Master switch. When off, logging is a no-op. |
 | `PLUTO_DEBUG_FILE` | path | `pluto-debug.log` | Where the log is appended. |
 | `PLUTO_DEBUG_LEVEL` | `trace`\|`debug`\|`info`\|`warn`\|`error` | `debug` | Minimum severity. `trace` unlocks the per-frame render firehose. |
-| `PLUTO_DEBUG_COMPONENTS` | comma list, `-` to exclude | all | Filter by subsystem, e.g. `tui,agent` (only those) or `-llm` (all but llm). |
+| `PLUTO_DEBUG_COMPONENTS` | comma list, `-` to exclude | all | Filter by subsystem, e.g. `tui,agent` (only those), `worker,orchestrator` (the parallel fan-out), or `-llm` (all but llm). |
 | `PLUTO_DEBUG_FRAMES` | `off`\|`coalesced`\|`full` | `coalesced` | UI frame logging (needs `trace`). `coalesced` collapses identical frames to `frame unchanged repeated=N`; `full` also dumps the rendered screen. |
 
 ### Capturing a log for an issue
