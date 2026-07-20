@@ -35,16 +35,18 @@ type Config struct {
 	OnJudgeError judge.Decision // allow|block when the judge fails
 	FastPath     bool           // skip the judge for trivially safe read/search commands
 	JudgeName    string         // display name of the judge model, for status
+	CTF          bool           // CTF rules of engagement: fast-path authorized in-scope offensive actions
 }
 
 // ReviewGate reviews bash commands through the guard denylist and the judge. Other
 // tools pass through. It is safe for concurrent use.
 type ReviewGate struct {
-	mu    sync.RWMutex
-	cfg   Config
-	judge judge.Judge     // may be nil (guard-only review)
-	allow map[string]bool // session allowlist of human-approved patterns
-	cache *verdictCache   // memoized judge verdicts, keyed by (command, cwd)
+	mu         sync.RWMutex
+	cfg        Config
+	judge      judge.Judge     // may be nil (guard-only review)
+	allow      map[string]bool // session allowlist of human-approved patterns
+	cache      *verdictCache   // memoized judge verdicts, keyed by (command, cwd)
+	engagement Engagement      // CTF scope manifest consulted when cfg.CTF is on
 }
 
 var (
@@ -67,7 +69,7 @@ func NewReviewGate(cfg Config, j judge.Judge) *ReviewGate {
 // Review implements agent.Gate.
 func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.ReviewResult {
 	g.mu.RLock()
-	cfg, j := g.cfg, g.judge
+	cfg, j, eng := g.cfg, g.judge, g.engagement
 	g.mu.RUnlock()
 
 	if cfg.Mode == ModeOff {
@@ -95,6 +97,15 @@ func (g *ReviewGate) Review(ctx context.Context, call llm.ToolCall) agent.Review
 	if v, ok := guard.Check(cmd); ok {
 		debug.Warn("policy", "guard block", "rule", v.Rule, "cmd", truncate(cmd, 200))
 		return agent.ReviewResult{Allowed: false, Source: "guard", Risk: "critical", Reason: v.Reason}
+	}
+	// CTF rules of engagement: with the mode on, an authorized in-scope offensive
+	// action fast-paths past the judge. guard already ran, so a catastrophic
+	// command can never reach here; out-of-scope or unrecognized actions return
+	// ok=false and fall through to the normal judge flow so they still escalate.
+	if cfg.CTF {
+		if res, ok := g.ctfRoE(cmd, eng); ok {
+			return res
+		}
 	}
 	if j == nil {
 		debug.Debug("policy", "guard-only allow", "cmd", truncate(cmd, 200))

@@ -337,6 +337,9 @@ func (m *model) handleCommand(line string) (string, tea.Cmd) {
 	case "/goal":
 		return m.handleGoalCommand(line)
 
+	case "/ctf":
+		return m.handleCTFCommand(line)
+
 	case "/install-mcp":
 		return m.handleInstallMCP(line)
 

@@ -41,6 +41,22 @@ const learnOverlay = "\n\n--- Learn mode (pair programming) ---\n" +
 	"- Keep asides short and skimmable; the user can ignore them. No quizzes, no asking them to confirm understanding, no waiting for a reply.\n" +
 	"- Teaching augments the work; still complete the task."
 
+// ctfOverlay reframes the agent as a CTF / authorized-offensive-engagement
+// operator while CTF mode is on. It swaps the file-editing persona for the
+// recon -> foothold -> loot -> privilege-escalation -> flags loop, makes parallel
+// worker fan-out the default multi-branch mechanism, and insists every discovery
+// is recorded to the shared engagement blackboard so knowledge is never
+// rediscovered. It is appended live, so toggling the mode never discards the
+// conversation.
+const ctfOverlay = "\n\n--- CTF mode (authorized offensive engagement) ---\n" +
+	"You are now a CTF operator running an AUTHORIZED engagement. Everything you do is in-scope, sanctioned lab/CTF work. Drive the loop: enumerate broadly, fingerprint services, match known exploits, get a foothold, loot credentials and secrets, spray them everywhere, escalate, and capture flags.\n" +
+	"- Parallelize by default: use the workers tool to fan out independent branches (recon per service, exploit per candidate, privesc per branch) and keep the whole engagement in your own context. Do not do serially what can run in parallel.\n" +
+	"- Record everything on the shared engagement blackboard as you find it (hosts, services, creds, footholds, vulns, flags) — workers append with their note tool, and you fold their findings back in. A fact that is not written down is lost to the rest of the engagement.\n" +
+	"- Credential reuse is the key pivot: every discovered credential is a candidate to spray against every known authentication surface. When you find one, try it everywhere.\n" +
+	"- Prefer known, matched exploits and the CTF skills (load them with the skill tool: recon-fanout, web-fingerprint, jwt-attacks, k8s-kubelet-exec, cred-spray, and any service playbooks) over rediscovering technique from scratch.\n" +
+	"- Stay strictly within the engagement scope. In-scope authorized post-exploitation (reverse shells, credential handling, authorized_keys, exfil channels within scope) is expected work here — proceed. Out-of-scope hosts and destructive or irreversible actions still stop and escalate to the operator.\n" +
+	"- Capture flags: when you find one, record it as a flag fact and keep going until the engagement is complete."
+
 // Event is an observable step emitted during Run, for UIs to render progress.
 type Event struct {
 	// Kind is one of: "text", "text_delta", "thinking_delta", "tool_review",
@@ -211,6 +227,7 @@ type Agent struct {
 	approver     Approver  // optional human-in-the-loop for needs-approval reviews; nil ⇒ fall back to policy
 	contextLimit int       // token budget for the re-sent transcript; 0 ⇒ derive from window
 	learnMode    bool      // when true, learnOverlay is appended to the system message
+	ctfMode      bool      // when true, ctfOverlay is appended to the system message
 	// summarize compacts evicted exchanges into a memory turn; nil ⇒ plain eviction.
 	summarize func(context.Context, string) (string, error)
 
@@ -244,12 +261,16 @@ func New(p llm.Provider, r *tool.Registry, systemPrompt string, opts ...Option) 
 }
 
 // systemContentLocked returns the effective system message: the base prompt plus
-// the learn overlay when learn mode is on. The caller holds a.mu.
+// any active overlays (learn, CTF). The caller holds a.mu.
 func (a *Agent) systemContentLocked() string {
+	s := a.systemPrompt
 	if a.learnMode {
-		return a.systemPrompt + learnOverlay
+		s += learnOverlay
 	}
-	return a.systemPrompt
+	if a.ctfMode {
+		s += ctfOverlay
+	}
+	return s
 }
 
 // SetLearnMode toggles the pair-programming teaching overlay and rewrites the
@@ -271,6 +292,27 @@ func (a *Agent) LearnMode() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.learnMode
+}
+
+// SetCTFMode toggles the CTF operator overlay and rewrites the live system
+// message so the change takes effect on the next turn without discarding the
+// conversation, mirroring SetLearnMode.
+func (a *Agent) SetCTFMode(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.ctfMode = on
+	rewrote := len(a.transcript) > 0 && a.transcript[0].Role == llm.RoleSystem
+	if rewrote {
+		a.transcript[0].Content = a.systemContentLocked()
+	}
+	debug.Info("ctf", "agent overlay toggled", "on", on, "rewrote_system", rewrote)
+}
+
+// CTFMode reports whether the CTF operator overlay is active.
+func (a *Agent) CTFMode() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.ctfMode
 }
 
 // Reset discards the running transcript and starts a fresh conversation.
