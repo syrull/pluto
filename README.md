@@ -59,12 +59,16 @@ grinding through the branches serially. The main agent stays the **orchestrator*
 it keeps its full context, never blocks, and pulls back only concise structured
 results.
 
-It drives this through one non-blocking `workers` tool with three actions:
+It drives this through one `workers` tool with four actions:
 
 - `dispatch` launches one or more workers and returns their ids immediately — the
   orchestrator keeps reasoning while they run.
 - `poll` returns the current state, budget burn, and structured results of some
   or all workers, on the orchestrator's own schedule (it never blocks).
+- `wait` blocks until the given workers finish (or a timeout elapses) and then
+  returns their results, for when the orchestrator has nothing to do until the
+  fan-out lands. It stays bounded because every worker carries a hard budget, and
+  the user can always cancel the turn to break out.
 - `cancel` stops workers and reclaims their budget.
 
 Each worker is a lightweight agent loop in its **own goroutine** with its own

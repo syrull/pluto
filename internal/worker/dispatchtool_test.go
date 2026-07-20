@@ -85,6 +85,28 @@ func TestDispatchToolPollReturnsResults(t *testing.T) {
 	t.Fatal("worker never reported done via poll")
 }
 
+func TestDispatchToolWaitReturnsResults(t *testing.T) {
+	d := NewDispatchTool(newFinishingPool())
+	if _, err := d.Execute(context.Background(), json.RawMessage(`{"action":"dispatch","workers":[{"task":"recon"}]}`)); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	out, err := d.Execute(context.Background(), json.RawMessage(`{"action":"wait","timeout_s":2}`))
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	m := decodeJSON(t, out)
+	if m["wait"] != "completed" {
+		t.Fatalf("wait reason = %v, want completed", m["wait"])
+	}
+	workers, ok := m["workers"].([]any)
+	if !ok || len(workers) != 1 {
+		t.Fatalf("wait workers = %v, want 1", m["workers"])
+	}
+	if state := workers[0].(map[string]any)["state"]; state != "done" {
+		t.Fatalf("worker state = %v, want done after wait", state)
+	}
+}
+
 func TestDispatchToolCancelRequiresIDs(t *testing.T) {
 	d := NewDispatchTool(newFinishingPool())
 	if _, err := d.Execute(context.Background(), json.RawMessage(`{"action":"cancel"}`)); err == nil {
