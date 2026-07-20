@@ -77,7 +77,7 @@ func (*DispatchTool) Schema() json.RawMessage {
 		},
 		"ids": {
 			Type:        "array",
-			Description: "For poll (optional; omit for all) and cancel (required): worker ids.",
+			Description: "For poll (optional; omit for all, but prefer the specific ids you care about once many workers exist) and cancel (required): worker ids.",
 			Items:       &tool.Property{Type: "string"},
 		},
 	}, "action").MustJSON()

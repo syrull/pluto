@@ -384,6 +384,116 @@ func TestPollResultsAreBounded(t *testing.T) {
 	}
 }
 
+// TestWorkerDefaultBudgetApplied proves a dispatch that omits a budget still gets
+// one, so an otherwise-unbounded worker is reaped rather than looping to maxSteps.
+func TestWorkerDefaultBudgetApplied(t *testing.T) {
+	orig := defaultBudget
+	defaultBudget = agent.Budget{Turns: 3}
+	defer func() { defaultBudget = orig }()
+
+	prov := &scriptProvider{gen: func(int, []llm.Message, []llm.ToolSpec, context.Context) (llm.Response, error) {
+		return callTool("c", "read", `{}`), nil // never finishes on its own
+	}}
+	p := NewPool(context.Background(), Config{Provider: prov, Registry: baseRegistry()})
+	ids := p.Dispatch(context.Background(), []Spec{{Task: "loop", Tools: []string{"read"}}}) // no budget set
+	waitFor(t, "worker reaped by default budget", func() bool { return p.Poll(ids)[0].State == StateDone })
+
+	st := p.Poll(ids)[0]
+	if st.StopReason != "budget:turns" {
+		t.Fatalf("stop reason = %q, want budget:turns (default budget)", st.StopReason)
+	}
+	if st.Budget.Turns != 3 {
+		t.Fatalf("budget turns = %d, want the defaulted 3", st.Budget.Turns)
+	}
+}
+
+// TestPoolPrunesTerminalWorkers proves the pool bounds its retained workers,
+// dropping the oldest terminal ones so a long session can't grow without bound.
+func TestPoolPrunesTerminalWorkers(t *testing.T) {
+	orig := maxRetainedWorkers
+	maxRetainedWorkers = 3
+	defer func() { maxRetainedWorkers = orig }()
+
+	p := newFinishingPool()
+	for i := 0; i < 5; i++ {
+		ids := p.Dispatch(context.Background(), []Spec{{Task: fmt.Sprintf("t%d", i)}})
+		waitFor(t, "worker done", func() bool { return p.Poll(ids)[0].State == StateDone })
+	}
+	if got := len(p.Snapshot()); got > 3 {
+		t.Fatalf("retained %d workers, want <= 3 (oldest terminal pruned)", got)
+	}
+}
+
+// panicTool always panics, to prove a worker fault is contained instead of
+// crashing the whole process.
+type panicTool struct{}
+
+func (panicTool) Name() string            { return "boom" }
+func (panicTool) Description() string     { return "panics" }
+func (panicTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (panicTool) Execute(context.Context, json.RawMessage) (string, error) {
+	panic("kaboom")
+}
+
+// TestWorkerPanicIsContained proves a panic in a worker's tool is recovered and
+// reported as a failed worker, not propagated to crash the process.
+func TestWorkerPanicIsContained(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.MustRegister(panicTool{})
+	prov := &scriptProvider{gen: func(step int, _ []llm.Message, _ []llm.ToolSpec, _ context.Context) (llm.Response, error) {
+		if step == 0 {
+			return callTool("c1", "boom", `{}`), nil
+		}
+		return finalText("done"), nil
+	}}
+	p := NewPool(context.Background(), Config{Provider: prov, Registry: reg})
+	ids := p.Dispatch(context.Background(), []Spec{{Task: "t", Tools: []string{"boom"}}})
+	waitFor(t, "worker failed by panic", func() bool { return p.Poll(ids)[0].State == StateFailed })
+
+	if st := p.Poll(ids)[0]; st.StopReason != "panic" {
+		t.Fatalf("stop reason = %q, want panic", st.StopReason)
+	}
+}
+
+// countingProvider records how many times it generated, to prove which backend a
+// worker ran on.
+type countingProvider struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (*countingProvider) Name() string { return "counting" }
+func (c *countingProvider) Generate(context.Context, []llm.Message, []llm.ToolSpec) (llm.Response, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return finalText("done"), nil
+}
+func (c *countingProvider) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// TestPoolSetProviderSwapsBackend proves a mid-session provider swap (e.g. a
+// /login upgrade from the offline stub) reaches workers dispatched afterward.
+func TestPoolSetProviderSwapsBackend(t *testing.T) {
+	old := &countingProvider{}
+	p := NewPool(context.Background(), Config{Provider: old, Registry: baseRegistry()})
+	neu := &countingProvider{}
+	p.SetProvider(neu)
+
+	ids := p.Dispatch(context.Background(), []Spec{{Task: "t"}})
+	waitFor(t, "worker done", func() bool { return p.Poll(ids)[0].State == StateDone })
+
+	if neu.count() == 0 {
+		t.Fatal("swapped-in provider was not used")
+	}
+	if old.count() != 0 {
+		t.Fatalf("old provider used %d times after swap, want 0", old.count())
+	}
+}
+
 func taskByte(task string) byte {
 	task = strings.TrimSpace(task)
 	if task == "" {

@@ -161,6 +161,80 @@ func TestLimiterAcquireCanceled(t *testing.T) {
 	l.release("host")
 }
 
+// TestLimiterPerTargetBlockDoesNotHoldGlobal proves a worker blocked on a busy
+// target does not sit on a global slot and starve a different target — i.e. the
+// per-target slot is taken before the global one.
+func TestLimiterPerTargetBlockDoesNotHoldGlobal(t *testing.T) {
+	l := newLimiter(Limits{MaxWorkers: 2, PerTarget: 1})
+	// First worker on A takes the A slot and one of the two global slots.
+	if err := l.acquire(context.Background(), "A"); err != nil {
+		t.Fatalf("first acquire A: %v", err)
+	}
+	// A second A blocks on the per-target cap; it must not consume a global slot.
+	blocked := make(chan error, 1)
+	go func() { blocked <- l.acquire(context.Background(), "A") }()
+
+	// A worker on a different target must still start, since a global slot is free.
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		done <- l.acquire(ctx, "B")
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("target B starved: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("target B never acquired — a per-target-blocked worker held a global slot")
+	}
+
+	// Freeing the first A and B lets the blocked A finally proceed.
+	l.release("B")
+	l.release("A")
+	if err := <-blocked; err != nil {
+		t.Fatalf("blocked A never acquired: %v", err)
+	}
+	l.release("A")
+}
+
+// TestRateGateRollsBackReservationOnCancel proves a worker canceled while waiting
+// on the rate gate restores the reservation, so it doesn't leave a gap that
+// needlessly delays the next start. Injected clock + timer keep it deterministic.
+func TestRateGateRollsBackReservationOnCancel(t *testing.T) {
+	l := newLimiter(Limits{Interval: time.Second})
+	fixed := time.Unix(1000, 0)
+	l.now = func() time.Time { return fixed }
+	l.after = func(time.Duration) <-chan time.Time { return make(chan time.Time) } // never fires
+
+	// First acquire reserves lastStart = fixed and returns immediately (no wait).
+	if err := l.acquire(context.Background(), "host"); err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+
+	// Second acquire reserves fixed+Interval and blocks on the (never-firing) timer.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- l.acquire(ctx, "host") }()
+	waitForCond(t, func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.lastStart["host"].Equal(fixed.Add(time.Second))
+	})
+
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("canceled acquire returned nil, want a context error")
+	}
+	l.mu.Lock()
+	got := l.lastStart["host"]
+	l.mu.Unlock()
+	if !got.Equal(fixed) {
+		t.Fatalf("lastStart = %v, want rolled back to %v", got, fixed)
+	}
+}
+
 func waitForCond(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

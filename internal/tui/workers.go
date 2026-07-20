@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/worker"
@@ -87,7 +88,7 @@ func workerMeta(s worker.Status) string {
 		parts = append(parts, formatTokens(s.Tokens)+" tok")
 	}
 	if s.Elapsed > 0 {
-		parts = append(parts, s.Elapsed.Round(1e8).String()) // 0.1s granularity
+		parts = append(parts, s.Elapsed.Round(100*time.Millisecond).String())
 	}
 	if s.Err != "" {
 		parts = append(parts, "err: "+oneLine(s.Err))

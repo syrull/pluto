@@ -188,7 +188,7 @@ func main() {
 	// model: the judge and summarizer cache their own token, so without this a
 	// re-login leaves the judge on an expired token and the fail-safe policy
 	// blocks every command for the rest of the session.
-	loginHook := buildLoginHook(ag, auxReauthers(judgeProvider, summarizerProvider, evaluatorProvider)...)
+	loginHook := buildLoginHook(ag, pool, auxReauthers(judgeProvider, summarizerProvider, evaluatorProvider)...)
 	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator, mcpSummary, pool).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
@@ -331,10 +331,16 @@ func auxReauthers(ps ...*anthropic.Provider) []reauther {
 // leaving the fail-safe policy to block every command. An auxiliary failure is
 // logged and surfaced in the status line but does not fail the login, since the
 // main model is the user-facing outcome.
-func reauthProviders(ag *agent.Agent, aux ...reauther) (string, error) {
-	status, err := reauthMain(ag)
+func reauthProviders(ag *agent.Agent, pool *worker.Pool, aux ...reauther) (string, error) {
+	status, upgraded, err := reauthMain(ag)
 	if err != nil {
 		return "", err
+	}
+	// A stub→Anthropic upgrade produces a brand-new provider; propagate it to the
+	// worker pool so workers dispatched after /login run on the real backend too.
+	// An in-place reauth mutates the shared provider, so the pool already sees it.
+	if upgraded != nil && pool != nil {
+		pool.SetProvider(upgraded)
 	}
 	var failed int
 	for _, p := range aux {
@@ -358,29 +364,31 @@ func reauthProviders(ag *agent.Agent, aux ...reauther) (string, error) {
 }
 
 // reauthMain re-authenticates the live agent provider, upgrading from the
-// offline stub when the session started without credentials.
-func reauthMain(ag *agent.Agent) (string, error) {
+// offline stub when the session started without credentials. It returns a
+// non-nil upgraded provider only when a brand-new one replaced the stub, so the
+// caller can propagate it to the worker pool; an in-place reauth returns nil.
+func reauthMain(ag *agent.Agent) (string, llm.Provider, error) {
 	if sw, ok := ag.Switcher(); ok {
 		if p, isAnthropic := sw.(*anthropic.Provider); isAnthropic {
 			timer := debug.NewTimer("auth", "provider reauth")
 			if err := p.Reauth(); err != nil {
 				timer.Stop("provider", p.Name(), "outcome", "error", "err", err)
 				debug.Warn("auth", "provider reauth failed", "provider", p.Name(), "err", err)
-				return "", err
+				return "", nil, err
 			}
 			timer.Stop("provider", ag.ProviderName(), "outcome", "ok")
 			debug.Info("auth", "provider reauthenticated", "provider", ag.ProviderName())
-			return "logged in — " + ag.ProviderName(), nil
+			return "logged in — " + ag.ProviderName(), nil, nil
 		}
 	}
 	p, err := anthropic.New(defaultModel())
 	if err != nil {
 		debug.Warn("auth", "provider upgrade failed", "err", err)
-		return "", err
+		return "", nil, err
 	}
 	ag.SetProvider(p)
 	debug.Info("auth", "provider upgraded from stub", "provider", ag.ProviderName())
-	return "logged in — upgraded to " + ag.ProviderName(), nil
+	return "logged in — upgraded to " + ag.ProviderName(), p, nil
 }
 
 // buildLoginHook wires /login to the Anthropic OAuth flow: it builds the PKCE
@@ -388,8 +396,8 @@ func reauthMain(ag *agent.Agent) (string, error) {
 // fallback), exchanges/persists the token, and re-authenticates the live
 // provider (upgrading from the offline stub if needed) plus every auxiliary
 // Anthropic provider (judge, summarizer).
-func buildLoginHook(ag *agent.Agent, aux ...reauther) *tui.LoginHook {
-	reauth := func() (string, error) { return reauthProviders(ag, aux...) }
+func buildLoginHook(ag *agent.Agent, pool *worker.Pool, aux ...reauther) *tui.LoginHook {
+	reauth := func() (string, error) { return reauthProviders(ag, pool, aux...) }
 	return &tui.LoginHook{
 		Authorize: func() (string, any, error) {
 			url, flow, err := auth.AuthorizeURL()

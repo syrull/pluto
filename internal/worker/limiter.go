@@ -68,22 +68,24 @@ func (l *limiter) targetSem(target string) chan struct{} {
 	return sem
 }
 
-// acquire blocks until a global and per-target slot are free and the rate gate
+// acquire blocks until a per-target and global slot are free and the rate gate
 // allows a start against target, or ctx is done. On success the caller must call
-// release(target) exactly once.
+// release(target) exactly once. The per-target slot is taken before the global
+// one so a worker blocked on a busy target does not sit on a scarce global slot
+// and starve other targets (head-of-line blocking).
 func (l *limiter) acquire(ctx context.Context, target string) error {
-	if l.global != nil {
-		select {
-		case l.global <- struct{}{}:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
 	if sem := l.targetSem(target); sem != nil {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			l.releaseGlobal()
+			return ctx.Err()
+		}
+	}
+	if l.global != nil {
+		select {
+		case l.global <- struct{}{}:
+		case <-ctx.Done():
+			l.releaseTarget(target)
 			return ctx.Err()
 		}
 	}
@@ -105,8 +107,9 @@ func (l *limiter) rateGate(ctx context.Context, target string) error {
 	l.mu.Lock()
 	now := l.now()
 	start := now
-	if last, ok := l.lastStart[target]; ok {
-		if earliest := last.Add(l.limits.Interval); earliest.After(start) {
+	prev, hadPrev := l.lastStart[target]
+	if hadPrev {
+		if earliest := prev.Add(l.limits.Interval); earliest.After(start) {
 			start = earliest
 		}
 	}
@@ -122,24 +125,42 @@ func (l *limiter) rateGate(ctx context.Context, target string) error {
 	case <-l.after(wait):
 		return nil
 	case <-ctx.Done():
+		// Undo our reservation so a canceled worker doesn't leave a gap that delays
+		// the next start — but only if nobody has stacked a later reservation on top.
+		l.mu.Lock()
+		if l.lastStart[target].Equal(start) {
+			if hadPrev {
+				l.lastStart[target] = prev
+			} else {
+				delete(l.lastStart, target)
+			}
+		}
+		l.mu.Unlock()
 		return ctx.Err()
 	}
 }
 
-// release hands back the per-target and global slots taken by acquire.
+// release hands back the global and per-target slots taken by acquire.
 func (l *limiter) release(target string) {
-	if l.limits.PerTarget > 0 {
-		l.mu.Lock()
-		sem := l.perTarget[target]
-		l.mu.Unlock()
-		if sem != nil {
-			select {
-			case <-sem:
-			default:
-			}
+	l.releaseGlobal()
+	l.releaseTarget(target)
+}
+
+// releaseTarget hands back only the per-target slot, for the acquire path that
+// took it but then failed to take the global slot.
+func (l *limiter) releaseTarget(target string) {
+	if l.limits.PerTarget <= 0 {
+		return
+	}
+	l.mu.Lock()
+	sem := l.perTarget[target]
+	l.mu.Unlock()
+	if sem != nil {
+		select {
+		case <-sem:
+		default:
 		}
 	}
-	l.releaseGlobal()
 }
 
 func (l *limiter) releaseGlobal() {

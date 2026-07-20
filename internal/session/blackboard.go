@@ -80,16 +80,17 @@ type State struct {
 // contention between concurrent goroutines and leaves a replayable record for a
 // post-hoc writeup. It is safe for concurrent use.
 type Blackboard struct {
-	mu     sync.RWMutex
-	seq    int
-	facts  []Fact
-	leases []leaseOp
-	now    func() time.Time // injectable clock for tests
+	mu       sync.RWMutex
+	seq      int
+	facts    []Fact
+	byWorker map[string][]Fact // facts indexed by worker so FactsBy stays O(k)
+	leases   []leaseOp
+	now      func() time.Time // injectable clock for tests
 }
 
 // NewBlackboard returns an empty blackboard.
 func NewBlackboard() *Blackboard {
-	return &Blackboard{now: time.Now}
+	return &Blackboard{byWorker: make(map[string][]Fact), now: time.Now}
 }
 
 func (b *Blackboard) clock() time.Time {
@@ -119,6 +120,10 @@ func (b *Blackboard) Append(worker, kind, value, detail string) (Fact, bool) {
 		Detail: strings.TrimSpace(detail),
 	}
 	b.facts = append(b.facts, f)
+	if b.byWorker == nil {
+		b.byWorker = make(map[string][]Fact)
+	}
+	b.byWorker[f.Worker] = append(b.byWorker[f.Worker], f)
 	n := len(b.facts)
 	b.mu.Unlock()
 	debug.Info("worker", "blackboard fact", "seq", f.Seq, "worker", f.Worker,
@@ -136,16 +141,18 @@ func (b *Blackboard) Facts() []Fact {
 }
 
 // FactsBy returns a copy of the facts appended by the named worker, in order.
+// It reads a per-worker index so a poll stays O(k) in that worker's facts rather
+// than scanning the whole log.
 func (b *Blackboard) FactsBy(worker string) []Fact {
 	worker = strings.TrimSpace(worker)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	var out []Fact
-	for _, f := range b.facts {
-		if f.Worker == worker {
-			out = append(out, f)
-		}
+	src := b.byWorker[worker]
+	if len(src) == 0 {
+		return nil
 	}
+	out := make([]Fact, len(src))
+	copy(out, src)
 	return out
 }
 

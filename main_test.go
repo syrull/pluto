@@ -347,7 +347,7 @@ func TestReauthProvidersReauthsAuxProviders(t *testing.T) {
 	judge := &fakeReauther{name: "judge"}
 	summarizer := &fakeReauther{name: "summarizer"}
 
-	status, err := reauthProviders(ag, judge, summarizer)
+	status, err := reauthProviders(ag, nil, judge, summarizer)
 	if err != nil {
 		t.Fatalf("reauthProviders() error = %v", err)
 	}
@@ -371,7 +371,7 @@ func TestReauthProvidersContinuesOnAuxFailure(t *testing.T) {
 	bad := &fakeReauther{name: "judge", err: errors.New("boom")}
 	good := &fakeReauther{name: "summarizer"}
 
-	status, err := reauthProviders(ag, bad, good)
+	status, err := reauthProviders(ag, nil, bad, good)
 	if err != nil {
 		t.Fatalf("reauthProviders() error = %v, want nil (main login succeeded)", err)
 	}
@@ -396,7 +396,7 @@ func TestReauthProvidersFailsWhenMainProviderFails(t *testing.T) {
 	ag := agent.New(llm.Stub{}, newTestRegistry(t), "sys")
 	judge := &fakeReauther{name: "judge"}
 
-	if _, err := reauthProviders(ag, judge); err == nil {
+	if _, err := reauthProviders(ag, nil, judge); err == nil {
 		t.Fatal("reauthProviders() expected error when main provider cannot authenticate")
 	}
 	if judge.calls != 0 {

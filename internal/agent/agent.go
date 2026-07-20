@@ -180,8 +180,11 @@ type Budget struct {
 	Wall time.Duration
 }
 
+// IsZero reports whether the budget imposes no limits at all (an unbounded run).
+func (b Budget) IsZero() bool { return b == Budget{} }
+
 // zero reports whether the budget imposes no limits at all.
-func (b Budget) zero() bool { return b.Turns == 0 && b.Tokens == 0 && b.Wall == 0 }
+func (b Budget) zero() bool { return b.IsZero() }
 
 // WithBudget caps the run per the given Budget (turns / tokens / wall-clock),
 // used by the worker runner to bound a sub-agent. A zero Budget is a no-op, so

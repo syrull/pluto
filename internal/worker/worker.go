@@ -46,6 +46,16 @@ const (
 // looping worker can't grow the pool's memory without bound.
 const maxTranscriptEvents = 500
 
+// maxRetainedWorkers caps how many workers the pool keeps so a long session with
+// many fan-outs can't grow its memory (and a poll-all response) without bound.
+// Oldest terminal workers are pruned first; live workers are always retained.
+var maxRetainedWorkers = 256
+
+// defaultBudget bounds a worker whose dispatch omitted a budget, so the promise
+// that "a stuck or looping worker is reaped" holds even when the orchestrator
+// forgets to set one. It is deliberately generous; an explicit budget overrides it.
+var defaultBudget = agent.Budget{Turns: 40, Wall: 10 * time.Minute}
+
 // Spec describes a worker to dispatch: a scoped task, a least-privilege tool
 // subset, skills to preload, a hard budget, and the target scope (also the
 // per-target rate-limit key).
@@ -186,11 +196,18 @@ func (p *Pool) Dispatch(ctx context.Context, specs []Spec) []string {
 			debug.Warn("orchestrator", "dispatch skipped (empty task)")
 			continue
 		}
+		// A budget is mandatory; supply a default when the orchestrator omitted one
+		// so every worker is reapable.
+		if spec.Budget.IsZero() {
+			spec.Budget = defaultBudget
+			debug.Debug("orchestrator", "worker budget defaulted",
+				"turns", spec.Budget.Turns, "wall", spec.Budget.Wall)
+		}
 		id := p.register(spec)
 		spec.ID = id
 		w := p.get(id)
 		wctx, cancel := context.WithCancel(workdir.With(p.base, dir))
-		w.cancel = cancel
+		w.setCancel(cancel)
 		debug.Info("orchestrator", "dispatch worker", "id", id, "scope", spec.Scope,
 			"tools", strings.Join(spec.Tools, ","), "skills", strings.Join(spec.Skills, ","),
 			"budget_turns", spec.Budget.Turns, "budget_tokens", spec.Budget.Tokens, "budget_wall", spec.Budget.Wall)
@@ -267,7 +284,38 @@ func (p *Pool) register(spec Spec) string {
 	spec.ID = id
 	p.workers[id] = &worker{spec: spec, state: StatePending}
 	p.order = append(p.order, id)
+	p.pruneLocked()
 	return id
+}
+
+// pruneLocked drops the oldest terminal workers once the pool exceeds
+// maxRetainedWorkers, bounding memory and the poll-all response on a long
+// session. Live (pending/running) workers are never pruned. The caller holds p.mu.
+func (p *Pool) pruneLocked() {
+	excess := len(p.order) - maxRetainedWorkers
+	if excess <= 0 {
+		return
+	}
+	kept := make([]string, 0, len(p.order))
+	pruned := 0
+	for _, id := range p.order {
+		if pruned < excess {
+			w := p.workers[id]
+			w.mu.RLock()
+			terminal := w.state == StateDone || w.state == StateFailed || w.state == StateCanceled
+			w.mu.RUnlock()
+			if terminal {
+				delete(p.workers, id)
+				pruned++
+				continue
+			}
+		}
+		kept = append(kept, id)
+	}
+	p.order = kept
+	if pruned > 0 {
+		debug.Info("orchestrator", "pruned terminal workers", "pruned", pruned, "retained", len(p.order))
+	}
 }
 
 func (p *Pool) get(id string) *worker {
@@ -276,9 +324,39 @@ func (p *Pool) get(id string) *worker {
 	return p.workers[id]
 }
 
+// provider returns the pool's current model backend under the lock, so a
+// concurrent SetProvider (from /login) never races a worker being built.
+func (p *Pool) provider() llm.Provider {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cfg.Provider
+}
+
+// SetProvider swaps the backend future workers run on, so a mid-session /login
+// (e.g. upgrading from the offline stub) reaches the pool too. Workers already
+// running keep the provider they started with. A nil provider is ignored.
+func (p *Pool) SetProvider(prov llm.Provider) {
+	if prov == nil {
+		return
+	}
+	p.mu.Lock()
+	p.cfg.Provider = prov
+	p.mu.Unlock()
+	debug.Info("orchestrator", "pool provider upgraded", "provider", prov.Name())
+}
+
 // run executes one worker: it waits for a concurrency/rate slot, builds a scoped
 // agent, runs the task to its budget, and classifies the outcome.
 func (p *Pool) run(ctx context.Context, w *worker) {
+	// Contain a worker fault to that worker: without this, a panic in the agent
+	// loop, a scoped tool, or an MCP tool would take down the whole process (and
+	// with it the orchestrator and every sibling worker).
+	defer func() {
+		if r := recover(); r != nil {
+			debug.Error("worker", "panic recovered", "id", w.spec.ID, "panic", fmt.Sprint(r))
+			w.finish(StateFailed, "panic", fmt.Errorf("worker panicked: %v", r))
+		}
+	}()
 	spec := w.spec
 	spawn := debug.NewTimer("worker", "spawn→acquire")
 	if err := p.limiter.acquire(ctx, spec.Scope); err != nil {
@@ -338,6 +416,10 @@ func classify(err error) (State, string) {
 // (so scope/judge context propagates), and the spec's hard budget.
 func (p *Pool) buildAgent(spec Spec) *agent.Agent {
 	reg := tool.NewRegistry()
+	// Register the note tool first so a granted tool that happens to be named
+	// "note" fails a harmless duplicate Register (below) instead of tripping a
+	// MustRegister panic that would crash the whole process.
+	reg.MustRegister(newNoteTool(p.cfg.Board, spec.ID))
 	var granted, missing []string
 	for _, name := range spec.Tools {
 		if t, ok := p.cfg.Registry.Lookup(name); ok {
@@ -348,7 +430,6 @@ func (p *Pool) buildAgent(spec Spec) *agent.Agent {
 		}
 		missing = append(missing, name)
 	}
-	reg.MustRegister(newNoteTool(p.cfg.Board, spec.ID))
 	debug.Info("worker", "tools scoped", "id", spec.ID,
 		"granted", strings.Join(granted, ","), "missing", strings.Join(missing, ","))
 
@@ -360,7 +441,7 @@ func (p *Pool) buildAgent(spec Spec) *agent.Agent {
 	if p.cfg.Summarize != nil {
 		opts = append(opts, agent.WithSummarizer(p.cfg.Summarize))
 	}
-	return agent.New(p.cfg.Provider, reg, sys, opts...)
+	return agent.New(p.provider(), reg, sys, opts...)
 }
 
 // workerPrompt frames a worker as an autonomous specialist: it states the scope
@@ -437,6 +518,14 @@ func (w *worker) appendEventLocked(ev Event) {
 	if len(w.events) > maxTranscriptEvents {
 		w.events = w.events[len(w.events)-maxTranscriptEvents:]
 	}
+}
+
+// setCancel stores the run's cancel func under the lock, so Cancel (which may run
+// on a different goroutine, e.g. the TUI) never races the dispatch that sets it.
+func (w *worker) setCancel(cancel context.CancelFunc) {
+	w.mu.Lock()
+	w.cancel = cancel
+	w.mu.Unlock()
 }
 
 func (w *worker) setRunning(ag *agent.Agent) {
