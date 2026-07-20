@@ -494,6 +494,115 @@ func TestPoolSetProviderSwapsBackend(t *testing.T) {
 	}
 }
 
+// TestWaitBlocksUntilComplete proves Wait blocks while a worker is running and
+// returns its final results once it finishes.
+func TestWaitBlocksUntilComplete(t *testing.T) {
+	release := make(chan struct{})
+	prov := &scriptProvider{gen: func(step int, _ []llm.Message, _ []llm.ToolSpec, ctx context.Context) (llm.Response, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return llm.Response{}, ctx.Err()
+		}
+		return finalText("done"), nil
+	}}
+	p := NewPool(context.Background(), Config{Provider: prov, Registry: baseRegistry()})
+	ids := p.Dispatch(context.Background(), []Spec{{Task: "t"}})
+	waitFor(t, "worker running", func() bool { return p.Poll(ids)[0].State == StateRunning })
+
+	type result struct {
+		st     []Status
+		reason string
+	}
+	done := make(chan result, 1)
+	go func() {
+		st, reason := p.Wait(context.Background(), ids, 0)
+		done <- result{st, reason}
+	}()
+
+	// Wait must not return while the worker is still running.
+	select {
+	case <-done:
+		t.Fatal("Wait returned before the worker finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case r := <-done:
+		if r.reason != "completed" {
+			t.Fatalf("wait reason = %q, want completed", r.reason)
+		}
+		if r.st[0].State != StateDone {
+			t.Fatalf("state = %s, want done", r.st[0].State)
+		}
+		if r.st[0].Results.Summary != "done" {
+			t.Fatalf("summary = %q, want done", r.st[0].Results.Summary)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Wait did not return after the worker finished")
+	}
+}
+
+// TestWaitTimesOut proves Wait returns "timeout" with the still-running state
+// when its deadline elapses before the worker finishes.
+func TestWaitTimesOut(t *testing.T) {
+	block := make(chan struct{})
+	defer close(block)
+	prov := &scriptProvider{gen: func(step int, _ []llm.Message, _ []llm.ToolSpec, ctx context.Context) (llm.Response, error) {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return llm.Response{}, ctx.Err()
+		}
+		return finalText("done"), nil
+	}}
+	p := NewPool(context.Background(), Config{Provider: prov, Registry: baseRegistry()})
+	ids := p.Dispatch(context.Background(), []Spec{{Task: "t"}})
+	waitFor(t, "worker running", func() bool { return p.Poll(ids)[0].State == StateRunning })
+
+	statuses, reason := p.Wait(context.Background(), ids, 20*time.Millisecond)
+	if reason != "timeout" {
+		t.Fatalf("reason = %q, want timeout", reason)
+	}
+	if statuses[0].State == StateDone {
+		t.Fatalf("worker should still be running at timeout, got %s", statuses[0].State)
+	}
+}
+
+// TestWaitReturnsOnCancel proves a canceled context unblocks Wait promptly.
+func TestWaitReturnsOnCancel(t *testing.T) {
+	block := make(chan struct{})
+	defer close(block)
+	prov := &scriptProvider{gen: func(step int, _ []llm.Message, _ []llm.ToolSpec, ctx context.Context) (llm.Response, error) {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return llm.Response{}, ctx.Err()
+		}
+		return finalText("done"), nil
+	}}
+	p := NewPool(context.Background(), Config{Provider: prov, Registry: baseRegistry()})
+	ids := p.Dispatch(context.Background(), []Spec{{Task: "t"}})
+	waitFor(t, "worker running", func() bool { return p.Poll(ids)[0].State == StateRunning })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan string, 1)
+	go func() {
+		_, reason := p.Wait(ctx, ids, time.Minute)
+		done <- reason
+	}()
+	cancel()
+	select {
+	case reason := <-done:
+		if reason != "canceled" {
+			t.Fatalf("reason = %q, want canceled", reason)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Wait did not return after ctx was canceled")
+	}
+}
+
 func taskByte(task string) byte {
 	task = strings.TrimSpace(task)
 	if task == "" {

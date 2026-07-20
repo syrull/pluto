@@ -56,6 +56,11 @@ var maxRetainedWorkers = 256
 // forgets to set one. It is deliberately generous; an explicit budget overrides it.
 var defaultBudget = agent.Budget{Turns: 40, Wall: 10 * time.Minute}
 
+// defaultWaitTimeout caps a Wait that was given no explicit timeout, so the
+// orchestrator can never block on a wait indefinitely. It comfortably exceeds
+// the default worker wall budget so a normal fan-out completes within it.
+var defaultWaitTimeout = 12 * time.Minute
+
 // Spec describes a worker to dispatch: a scoped task, a least-privilege tool
 // subset, skills to preload, a hard budget, and the target scope (also the
 // per-target rate-limit key).
@@ -145,6 +150,9 @@ type worker struct {
 	events      []Event
 	ag          *agent.Agent // set once the run starts; read for live token spend
 	cancel      context.CancelFunc
+	// done is closed exactly once when the worker reaches a terminal state, so
+	// Wait can block on completion without polling. Created in register.
+	done chan struct{}
 }
 
 // Pool owns the dispatched workers and their concurrency. It is safe for
@@ -222,27 +230,74 @@ func (p *Pool) Dispatch(ctx context.Context, specs []Spec) []string {
 // ids is empty. It never blocks: it is how the orchestrator gathers results on
 // its own schedule without stalling.
 func (p *Pool) Poll(ids []string) []Status {
-	var selected []*worker
-	p.mu.Lock()
-	if len(ids) == 0 {
-		for _, id := range p.order {
-			selected = append(selected, p.workers[id])
-		}
-	} else {
-		for _, id := range ids {
-			if w, ok := p.workers[id]; ok {
-				selected = append(selected, w)
-			}
-		}
-	}
-	p.mu.Unlock()
-
+	selected := p.selectWorkers(ids)
 	out := make([]Status, 0, len(selected))
 	for _, w := range selected {
 		out = append(out, p.status(w))
 	}
 	debug.Debug("orchestrator", "poll", "requested", len(ids), "returned", len(out))
 	return out
+}
+
+// selectWorkers returns the workers named by ids in that order, or every worker
+// in dispatch order when ids is empty. Unknown ids are skipped.
+func (p *Pool) selectWorkers(ids []string) []*worker {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var selected []*worker
+	if len(ids) == 0 {
+		for _, id := range p.order {
+			selected = append(selected, p.workers[id])
+		}
+		return selected
+	}
+	for _, id := range ids {
+		if w, ok := p.workers[id]; ok {
+			selected = append(selected, w)
+		}
+	}
+	return selected
+}
+
+// Wait blocks until the named workers (or every worker when ids is empty) reach
+// a terminal state, then returns their final status. This is the orchestrator's
+// opt-in synchronization point: unlike Poll it deliberately blocks, for when the
+// model has fanned out work and cannot proceed until it lands. It always returns
+// when ctx is done or timeout elapses (timeout <= 0 applies defaultWaitTimeout),
+// yielding whatever states workers have reached so far; the returned reason is
+// "completed", "timeout", or "canceled". Because every worker carries a hard
+// budget, a wait for completion is bounded even without a timeout.
+func (p *Pool) Wait(ctx context.Context, ids []string, timeout time.Duration) ([]Status, string) {
+	selected := p.selectWorkers(ids)
+	if timeout <= 0 {
+		timeout = defaultWaitTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	debug.Info("orchestrator", "wait start", "workers", len(selected), "timeout", timeout)
+	waitTimer := debug.NewTimer("orchestrator", "wait done")
+	reason := "completed"
+Loop:
+	for _, w := range selected {
+		select {
+		case <-w.done:
+		case <-ctx.Done():
+			reason = "canceled"
+			break Loop
+		case <-timer.C:
+			reason = "timeout"
+			break Loop
+		}
+	}
+	waitTimer.Stop("reason", reason, "workers", len(selected))
+
+	out := make([]Status, 0, len(selected))
+	for _, w := range selected {
+		out = append(out, p.status(w))
+	}
+	debug.Info("orchestrator", "wait returned", "reason", reason, "returned", len(out))
+	return out, reason
 }
 
 // Cancel stops the named workers and returns the ids actually canceled (a worker
@@ -282,7 +337,7 @@ func (p *Pool) register(spec Spec) string {
 		id = fmt.Sprintf("w%d", p.seq)
 	}
 	spec.ID = id
-	p.workers[id] = &worker{spec: spec, state: StatePending}
+	p.workers[id] = &worker{spec: spec, state: StatePending, done: make(chan struct{})}
 	p.order = append(p.order, id)
 	p.pruneLocked()
 	return id
@@ -546,16 +601,23 @@ func (w *worker) recordSummary(summary string) {
 	w.mu.Unlock()
 }
 
+// finish records a worker's terminal state. Only the first call takes effect
+// (so the panic-recovery path can't clobber a real outcome or double-close done)
+// and it closes the done channel exactly once to release any waiters.
 func (w *worker) finish(state State, reason string, err error) {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.endedAt.IsZero() {
+		return
+	}
 	w.state = state
 	w.stopReason = reason
 	w.err = err
-	if w.endedAt.IsZero() {
-		w.endedAt = time.Now()
-	}
+	w.endedAt = time.Now()
 	w.currentTool = ""
-	w.mu.Unlock()
+	if w.done != nil {
+		close(w.done)
+	}
 }
 
 func (w *worker) snapshotToolCalls() int {

@@ -31,15 +31,18 @@ func NewDispatchTool(pool *Pool) *DispatchTool { return &DispatchTool{pool: pool
 func (*DispatchTool) Name() string { return "workers" }
 
 func (*DispatchTool) Description() string {
-	return "Fan out work to parallel worker sub-agents and gather their results " +
-		"WITHOUT blocking. Each worker runs concurrently in its own agent loop with " +
-		"its own context, a least-privilege tool subset, preloaded skills, and a hard " +
-		"budget. Use action=dispatch to launch workers (returns their ids immediately " +
-		"— you keep working); action=poll to pull current status and concise " +
-		"structured results for some or all workers (non-blocking; call it on later " +
-		"turns as work lands); action=cancel to stop workers. Prefer this over running " +
-		"independent branches of work serially yourself. Give each worker the smallest " +
-		"tool set it needs and a budget (turns/tokens/wall_s) so a stuck worker is reaped."
+	return "Fan out work to parallel worker sub-agents and gather their results. " +
+		"Each worker runs concurrently in its own agent loop with its own context, a " +
+		"least-privilege tool subset, preloaded skills, and a hard budget. Use " +
+		"action=dispatch to launch workers (returns their ids immediately — you keep " +
+		"working); action=poll to pull current status and concise structured results " +
+		"for some or all workers WITHOUT blocking (call it on later turns as work " +
+		"lands); action=wait to BLOCK until the given workers finish (or a timeout) " +
+		"and then return their results, for when you cannot proceed until the fan-out " +
+		"lands — prefer poll when you have other work to do meanwhile; action=cancel " +
+		"to stop workers. Prefer this over running independent branches of work " +
+		"serially yourself. Give each worker the smallest tool set it needs and a " +
+		"budget (turns/tokens/wall_s) so a stuck worker is reaped."
 }
 
 func (*DispatchTool) Schema() json.RawMessage {
@@ -67,8 +70,8 @@ func (*DispatchTool) Schema() json.RawMessage {
 	return tool.ObjectSchema(map[string]tool.Property{
 		"action": {
 			Type:        "string",
-			Description: "dispatch, poll, or cancel.",
-			Enum:        []string{"dispatch", "poll", "cancel"},
+			Description: "dispatch, poll, wait, or cancel.",
+			Enum:        []string{"dispatch", "poll", "wait", "cancel"},
 		},
 		"workers": {
 			Type:        "array",
@@ -77,17 +80,22 @@ func (*DispatchTool) Schema() json.RawMessage {
 		},
 		"ids": {
 			Type:        "array",
-			Description: "For poll (optional; omit for all, but prefer the specific ids you care about once many workers exist) and cancel (required): worker ids.",
+			Description: "For poll and wait (optional; omit for all, but prefer the specific ids you care about once many workers exist) and cancel (required): worker ids.",
 			Items:       &tool.Property{Type: "string"},
+		},
+		"timeout_s": {
+			Type:        "integer",
+			Description: "For wait: max seconds to block before returning whatever has landed (default is a generous internal cap). You can call wait again if it times out.",
 		},
 	}, "action").MustJSON()
 }
 
-// dispatchArgs is the parsed tool input across all three actions.
+// dispatchArgs is the parsed tool input across all four actions.
 type dispatchArgs struct {
-	Action  string            `json:"action"`
-	Workers []dispatchSpecArg `json:"workers"`
-	IDs     []string          `json:"ids"`
+	Action   string            `json:"action"`
+	Workers  []dispatchSpecArg `json:"workers"`
+	IDs      []string          `json:"ids"`
+	TimeoutS int               `json:"timeout_s"`
 }
 
 type dispatchSpecArg struct {
@@ -126,10 +134,12 @@ func (d *DispatchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return d.dispatch(ctx, a.Workers)
 	case "poll":
 		return d.poll(a.IDs)
+	case "wait":
+		return d.wait(ctx, a.IDs, a.TimeoutS)
 	case "cancel":
 		return d.cancel(a.IDs)
 	default:
-		return "", fmt.Errorf("workers: unknown action %q (want dispatch, poll, or cancel)", a.Action)
+		return "", fmt.Errorf("workers: unknown action %q (want dispatch, poll, wait, or cancel)", a.Action)
 	}
 }
 
@@ -168,6 +178,22 @@ func (d *DispatchTool) poll(ids []string) (string, error) {
 	}
 	debug.Debug("orchestrator", "poll tool", "requested", len(ids), "returned", len(views))
 	return marshalResult(map[string]any{"workers": views}), nil
+}
+
+func (d *DispatchTool) wait(ctx context.Context, ids []string, timeoutS int) (string, error) {
+	statuses, reason := d.pool.Wait(ctx, ids, time.Duration(timeoutS)*time.Second)
+	views := make([]pollView, 0, len(statuses))
+	for _, s := range statuses {
+		views = append(views, toPollView(s))
+	}
+	debug.Info("orchestrator", "wait tool", "requested", len(ids), "returned", len(views), "reason", reason)
+	note := "all requested workers finished."
+	if reason == "timeout" {
+		note = "wait timed out before every worker finished — some are still running; call wait or poll again."
+	} else if reason == "canceled" {
+		note = "wait was interrupted — some workers may still be running."
+	}
+	return marshalResult(map[string]any{"workers": views, "wait": reason, "note": note}), nil
 }
 
 func (d *DispatchTool) cancel(ids []string) (string, error) {
