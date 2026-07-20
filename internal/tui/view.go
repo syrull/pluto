@@ -304,6 +304,12 @@ func (m model) modelStatus() string {
 	shortName := shortModelName(name)
 	add(styleStatusModel.Render(shortName), shortName)
 
+	// The CTF mode badge rides right after the model name so it is always the
+	// first thing after the identity segment while an engagement is active.
+	if chip, raw := ctfChip(m.ctf); raw != "" {
+		add(chip, raw)
+	}
+
 	if m.agent != nil {
 		if th, ok := m.agent.Thinker(); ok {
 			raw := "T:" + thinkStatusText(th.ThinkLevel())

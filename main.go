@@ -20,6 +20,7 @@ import (
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/llm/anthropic"
 	"github.com/syrull/pluto/internal/mcp"
+	"github.com/syrull/pluto/internal/mode"
 	"github.com/syrull/pluto/internal/policy"
 	"github.com/syrull/pluto/internal/reposcan"
 	"github.com/syrull/pluto/internal/session"
@@ -115,6 +116,16 @@ func main() {
 	defer debug.LogPanic()
 	logInvocation()
 
+	// The operating mode (default vs CTF) is resolved once at startup from the
+	// --ctf/ctf flag or the PLUTO_MODE/PLUTO_CTF env toggles, mirroring goalEnabled.
+	// CTF must be enabled before the system prompt is built so the embedded CTF
+	// skills ride in its skills index.
+	initialMode := mode.Resolve(os.Args)
+	if initialMode.IsCTF() {
+		skills.SetCTFMode(true)
+		debug.Info("ctf", "startup mode", "mode", initialMode.String())
+	}
+
 	reg := tool.NewRegistry()
 	reg.MustRegister(tools.Read{})
 	reg.MustRegister(tools.Write{})
@@ -134,6 +145,16 @@ func main() {
 
 	provider := selectProvider()
 	gate, judgeProvider := buildGate()
+
+	// In CTF mode the review gate fast-paths authorized in-scope offensive actions
+	// while still escalating out-of-scope/destructive ones (scope via
+	// PLUTO_CTF_SCOPE). The gate is shared with the worker pool, so the RoE covers
+	// the parallel fan-out too.
+	if initialMode.IsCTF() {
+		if c, ok := gate.(interface{ SetCTFMode(bool) }); ok {
+			c.SetCTFMode(true)
+		}
+	}
 
 	// One summarizer, shared by the agents (context compaction), the TUI (agent
 	// auto-labeling), and the worker pool (worker context compaction); nil when it
@@ -159,7 +180,7 @@ func main() {
 	reg.MustRegister(worker.NewDispatchTool(pool))
 
 	systemPrompt := buildSystemPrompt(reg)
-	logConfig(provider, gate)
+	logConfig(provider, gate, initialMode)
 
 	// The /goal completion evaluator: a small, fast, transcript-only model that
 	// judges the user's condition after each turn. nil when disabled (PLUTO_GOAL=off)
@@ -175,12 +196,18 @@ func main() {
 	// approver, system prompt, and summarizer, but an independent transcript so
 	// agents run in parallel.
 	newAgent := func() *agent.Agent {
-		return agent.New(provider, reg, systemPrompt,
+		a := agent.New(provider, reg, systemPrompt,
 			agent.WithGate(gate),
 			agent.WithApprover(approver),
 			agent.WithContextLimit(contextLimit()),
 			agent.WithSummarizer(summarizer),
 		)
+		// Seed spawned agents with the CTF operator overlay so every workspace
+		// shares the mode when launched into it.
+		if initialMode.IsCTF() {
+			a.SetCTFMode(true)
+		}
+		return a
 	}
 	ag := newAgent()
 	debug.Info("lifecycle", "starting TUI")
@@ -189,7 +216,7 @@ func main() {
 	// re-login leaves the judge on an expired token and the fail-safe policy
 	// blocks every command for the rest of the session.
 	loginHook := buildLoginHook(ag, pool, auxReauthers(judgeProvider, summarizerProvider, evaluatorProvider)...)
-	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator, mcpSummary, pool).Run(); err != nil {
+	if _, err := tui.New(ag, newAgent, summarizer, loginHook, approver, evaluator, mcpSummary, pool, initialMode).Run(); err != nil {
 		debug.Error("lifecycle", "TUI exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "pluto:", err)
 		os.Exit(1)
@@ -221,7 +248,7 @@ func logInvocation() {
 
 // logConfig records the effective, env-derived configuration with secrets
 // redacted, so the log states exactly which model/judge/auto settings were in play.
-func logConfig(provider llm.Provider, gate agent.Gate) {
+func logConfig(provider llm.Provider, gate agent.Gate, m mode.Mode) {
 	if !debug.Enabled() {
 		return
 	}
@@ -241,6 +268,8 @@ func logConfig(provider llm.Provider, gate agent.Gate) {
 		"provider", provider.Name(),
 		"model", defaultModel(),
 		"judge_model", judgeModel(),
+		"mode", m.String(),
+		"ctf_scope", os.Getenv("PLUTO_CTF_SCOPE"),
 		"goal", goalState,
 		"goal_model", goalModel(),
 		"goal_max_turns", os.Getenv("PLUTO_GOAL_MAX_TURNS"),

@@ -14,9 +14,11 @@ import (
 	"github.com/charmbracelet/glamour"
 
 	"github.com/syrull/pluto/internal/agent"
+	"github.com/syrull/pluto/internal/debug"
 	"github.com/syrull/pluto/internal/goal"
 	"github.com/syrull/pluto/internal/llm"
 	"github.com/syrull/pluto/internal/mcp"
+	"github.com/syrull/pluto/internal/mode"
 	"github.com/syrull/pluto/internal/session"
 	"github.com/syrull/pluto/internal/tui/widgets"
 	"github.com/syrull/pluto/internal/worker"
@@ -252,6 +254,12 @@ type model struct {
 	// workers tool; the /workers command inspects it live. nil in the bare/test
 	// model and in a build without the pool wired.
 	pool *worker.Pool
+
+	// ctf reports whether CTF mode is active: the red theme, the CTF badge, and
+	// the agents' CTF operator overlay. Toggled live by /ctf and seeded from the
+	// startup mode. It is a model-level flag (theme/badge are global) while the
+	// operator overlay is applied to each workspace's agent.
+	ctf bool
 }
 
 // workspace is one agent's conversation and its UI state. The model's matching
@@ -380,7 +388,7 @@ func (m model) inputView() string {
 // no interactive approval); evaluator drives the /goal completion loop (nil ⇒
 // /goal degrades with a clear message); mcpInfo is the startup MCP load outcome
 // shown by /mcp.
-func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook, approver *Approver, evaluator goal.Evaluator, mcpInfo mcp.Summary, pool *worker.Pool) *tea.Program {
+func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Context, string) (string, error), login *LoginHook, approver *Approver, evaluator goal.Evaluator, mcpInfo mcp.Summary, pool *worker.Pool, initialMode mode.Mode) *tea.Program {
 	cwd, _ := os.Getwd()
 	ws := &workspace{id: 0, cwd: cwd, agent: a, showHome: true}
 	m := model{
@@ -389,7 +397,13 @@ func New(a *agent.Agent, newAgent func() *agent.Agent, summarize func(context.Co
 		workspaces: []*workspace{ws}, active: 0, nextID: 1,
 		newAgent: newAgent, summarize: summarize, approver: approver,
 		evaluator: evaluator, goalMaxTurns: goalMaxTurns(), mcpInfo: mcpInfo,
-		pool: pool,
+		pool: pool, ctf: initialMode.IsCTF(),
+	}
+	// Seed the theme so the very first render is red when launched in CTF mode;
+	// the agents' CTF overlay is applied by main before New.
+	if m.ctf {
+		setTheme(themeCTF)
+		debug.Info("ctf", "mode active at startup", "source", "flag/env")
 	}
 	return tea.NewProgram(m)
 }

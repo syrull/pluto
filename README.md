@@ -199,6 +199,43 @@ positive number to pause the loop after that many turns. `PLUTO_GOAL_MODEL`
 overrides the evaluator model (default: the judge model), and `PLUTO_GOAL=off`
 disables the feature.
 
+## CTF mode
+
+`/ctf` switches pluto from a code-development harness into an **authorized
+offensive-engagement** harness for CTFs and sanctioned labs. It is an additive
+mode — it never replaces the default coding flow, and `/ctf` toggles it back.
+
+Enter it three ways: launch with `pluto --ctf` (or the `pluto ctf` subcommand),
+set `PLUTO_MODE=ctf` (or `PLUTO_CTF=on`), or run `/ctf` live in a session
+(`/ctf on|off|status`).
+
+While the mode is active:
+
+- **Persona.** The agents run a CTF operator workflow — enumerate broadly,
+  fingerprint services, match known exploits, get a foothold, loot credentials,
+  spray them everywhere, escalate, capture flags — and record everything to the
+  engagement blackboard.
+- **Parallel by default.** The parallel worker sub-agents are the default
+  fan-out mechanism (recon per service, exploit per candidate, privesc per
+  branch) while the orchestrator keeps the whole engagement in context.
+- **Engagement blackboard.** A shared, append-only log of
+  hosts / services / creds / footholds / vulns / flags that survives across
+  turns; `/ctf status` shows the folded state, flags first. A discovered
+  credential is a spray candidate against every known auth surface.
+- **CTF skills.** A curated skill set ships in the binary and is loaded on
+  demand with the `skill` tool: `recon-fanout`, `web-fingerprint`,
+  `jwt-attacks`, `k8s-kubelet-exec`, `cred-spray`. An on-disk `skills/<name>`
+  of the same name overrides the embedded copy.
+- **Red theme + badge.** The palette goes red-forward and a persistent `CTF`
+  badge sits in the status line so the mode is always obvious.
+- **Scope-aware rules of engagement.** With the mode on, the review gate
+  fast-paths authorized in-scope offensive actions instead of judging them one
+  by one, while the offline guard still blocks catastrophic commands and
+  out-of-scope hosts still escalate to the judge. Set the authorized scope with
+  `PLUTO_CTF_SCOPE` (comma-separated CIDRs or IPs, e.g.
+  `PLUTO_CTF_SCOPE=10.10.0.0/16,192.168.1.5`); an empty scope means no CIDR
+  restriction.
+
 ## MCP servers
 
 Pluto can load [Model Context Protocol](https://modelcontextprotocol.io) servers
