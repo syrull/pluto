@@ -19,6 +19,7 @@ var slashCommands = []widgets.Command{
 	{Name: "/think", Args: "[level]", Desc: "set the extended-thinking level"},
 	{Name: "/auto", Args: "[on|off]", Desc: "toggle auto mode"},
 	{Name: "/goal", Args: "[condition|clear]", Desc: "keep working until a condition is met"},
+	{Name: "/ctf", Args: "[on|off|status]", Desc: "toggle CTF mode — red theme, offensive workflow, engagement blackboard"},
 	{Name: "/learn", Args: "[on|off]", Desc: "toggle learn mode — explores the project and explains it as it works"},
 	{Name: "/gh", Desc: "open the GitHub browser"},
 	{Name: "/image", Args: "<path>", Desc: "attach an image to your next message"},
