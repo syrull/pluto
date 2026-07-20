@@ -42,20 +42,32 @@ type Skill struct {
 // unreadable, or carries no description are skipped since they can't be
 // triggered or usefully listed.
 func List(dir string) []Skill {
+	var out []Skill
+	seen := make(map[string]bool)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			debug.Warn("tool", "skills dir unreadable", "dir", dir, "err", err)
 		}
-		return nil
-	}
-	var out []Skill
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
+	} else {
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			if s, ok := index(dir, e.Name()); ok {
+				out = append(out, s)
+				seen[s.Name] = true
+			}
 		}
-		if s, ok := index(dir, e.Name()); ok {
-			out = append(out, s)
+	}
+	// While CTF mode is active, merge the embedded CTF playbooks. On-disk skills
+	// of the same name win so a user can override an embedded recipe.
+	if CTFMode() {
+		for _, s := range ctfSkills() {
+			if !seen[s.Name] {
+				out = append(out, s)
+				seen[s.Name] = true
+			}
 		}
 	}
 	if len(out) == 0 {
@@ -103,6 +115,14 @@ func Load(dir, name string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			// Fall back to the embedded CTF playbook of the same name while CTF
+			// mode is active, so a mode skill loads without an on-disk copy.
+			if CTFMode() {
+				if body, ok := ctfLoad(name); ok {
+					debug.Info("ctf", "embedded skill loaded", "name", name, "chars", len(body))
+					return body, nil
+				}
+			}
 			return "", fmt.Errorf("skills: skill %q not found", name)
 		}
 		debug.Warn("tool", "skill file unreadable", "path", path, "err", err)
